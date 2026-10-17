@@ -27,10 +27,25 @@ try: s.bind(("127.0.0.1",int(sys.argv[1])))
 except OSError: sys.exit(1)
 else: s.close(); sys.exit(0)' "$1"
 }
-# Reuse the app if it is already serving its health endpoint.
+# Restart this repository's own backend so updated code is loaded. Never kill an unrelated service.
 if is_nexus_running "$PORT"; then
-  echo "Nexus Panel is already running on port $PORT."
-else
+  OLD_PID=""
+  OLD_ARGS=""
+  if [ -f /tmp/nexus-dashboard.pid ]; then
+    OLD_PID="$(cat /tmp/nexus-dashboard.pid 2>/dev/null || true)"
+    if [ -n "$OLD_PID" ]; then OLD_ARGS="$(ps -p "$OLD_PID" -o args= 2>/dev/null || true)"; fi
+  fi
+  if [ -n "$OLD_PID" ] && printf '%s' "$OLD_ARGS" | grep -Fq "$ROOT/server.py"; then
+    echo "Restarting Nexus Panel backend to apply the current repository code..."
+    kill "$OLD_PID" 2>/dev/null || true
+    sleep 1
+  else
+    echo "Nexus Panel is already running on port $PORT under another process."
+    echo "No process was stopped. Set NEXUS_PORT to another port if needed."
+    exit 0
+  fi
+fi
+if ! is_nexus_running "$PORT"; then
   # Clean up only the legacy static preview process recorded by the previous Nexus launcher.
   if [ -f /tmp/nexus-dashboard.pid ]; then
     OLD_PID="$(cat /tmp/nexus-dashboard.pid 2>/dev/null || true)"
