@@ -45,8 +45,32 @@ function renderServers(items) {
     items.map(item => '<tr data-search="' + esc([item.name,item.game,item.panel,item.connect_address].join(" ").toLowerCase()) + '">' +
       '<td><div class="server-name"><span class="game ' + gameClass(item.game) + '">' + gameLetter(item.game) + '</span><div><strong>' + esc(item.name) + '</strong><small>' + esc(item.id.slice(0,8)) + '</small></div></div></td>' +
       '<td>' + esc(item.game) + '</td><td><span class="tag">' + esc(item.panel) + '</span></td>' +
-      '<td><span class="server-status ' + statusClass(item.status) + '"><i></i>' + esc(item.status) + '</span></td>' +
+      '<td>' + (item.game === "Minecraft" && item.connect_port ? '<span class="server-status configured" data-game-ping="' + esc(item.id) + '"><i></i><span data-ping-label>Checking…</span></span>' : '<span class="server-status ' + statusClass(item.status) + '"><i></i>' + esc(item.status) + '</span>') + '</td>' +
       '<td>' + (item.connect_address ? '<button class="address-copy" data-copy-address="' + esc(item.connect_address) + '">' + esc(item.connect_address) + '</button><small class="address-hint">' + (item.public_address_configured ? 'Public address set' : 'Local only · configure public IP') + '</small>' : '<span>Address unavailable for this adapter</span>') + '</td><td><button class="record-manage" data-manage-server="' + esc(item.id) + '">Manage</button></td></tr>').join("");
+}
+async function refreshMinecraftStatuses(items) {
+  await Promise.all(items.filter(item => item.game === "Minecraft" && item.connect_port).map(async item => {
+    const badges = $('[data-game-ping="' + CSS.escape(item.id) + '"]');
+    try {
+      const response = await fetch("/api/servers/" + encodeURIComponent(item.id) + "/game-status", {credentials:"same-origin"});
+      const data = await response.json();
+      for (const badge of badges) {
+        const label = badge.querySelector("[data-ping-label]");
+        if (!label) continue;
+        if (data.online) {
+          label.textContent = "Online · " + data.players + "/" + data.max_players;
+          badge.className = "server-status configured";
+          badge.title = (data.version || "Minecraft") + (data.motd ? " — " + data.motd : "");
+        } else {
+          label.textContent = "Offline";
+          badge.className = "server-status stopped";
+          badge.title = "No Java Edition status response on the allocated local port.";
+        }
+      }
+    } catch (_) {
+      for (const badge of badges) { const label=badge.querySelector("[data-ping-label]"); if(label) label.textContent="Status unavailable"; }
+    }
+  }));
 }
 function renderConnectors(items) {
   cachedConnectors = items;
@@ -228,6 +252,7 @@ async function refreshDashboard() {
     $("#serverCountLabel").textContent = overview.servers + " records";
     $("#serverProgress").style.width = overview.servers ? "100%" : "0%";
     renderServers(servers.items); renderConnectors(connectors.items); renderActivities(overview.activities);
+    refreshMinecraftStatuses(servers.items);
     if (currentPage !== "Overview") renderPageWorkspace(currentPage);
     const footer = $(".footer span:last-child");
     if (footer) footer.innerHTML = '<i></i> Backend online · SQLite local MVP';
