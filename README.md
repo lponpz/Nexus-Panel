@@ -1,43 +1,37 @@
 # Nexus Panel
 
-**Nexus Panel — working local web-app foundation**
+**Nexus Panel — independent game-hosting panel in active development**
 
-Nexus is a Blue Neon responsive game-hosting dashboard with a Python standard-library HTTP API and persistent SQLite database. This repository now includes a browser-based first-run installer.
+Nexus has its own Blue Neon web UI, Python API, SQLite state, installer, per-server workspace, Java process adapter, browser console, and basic file manager. It is not a fork of Pterodactyl. The current runtime is a development adapter, not yet a production-grade Wings/node replacement.
 
-## Start in GitHub Codespaces
-
-From the repository root, run:
+## Run in GitHub Codespaces
 
 ```bash
 git pull
 bash ./nexus
 ```
 
-The launcher checks whether the app is already running, detects an occupied port and tries the next available port, starts the backend, waits for `/api/health`, and prints the installer and dashboard URLs. In Codespaces, open the printed **Installer GUI** URL. If the URL does not open automatically, use the **Ports** tab and open the port shown in the terminal.
+Open the installer/dashboard URL printed by the launcher. If it does not open automatically, open the matching port in the Codespaces **Ports** tab. Keep that port **Private**.
 
-First-time clone:
+## Currently implemented
 
-```bash
-git clone https://github.com/lponpz/Nexus-Panel.git && cd Nexus-Panel && bash ./nexus
-```
+- First-run installer and persistent workspace settings.
+- Server record creation, editing and deletion.
+- Per-server workspace folders.
+- Java-only process launch/stop for a server JAR named `server.jar`.
+- Browser console with output polling and game-console command input.
+- Per-server file browser, text file create/edit/delete, folder create, and uploads up to 50 MB.
+- SQLite activity log, overview counts, and connector endpoint records.
 
-## Working features
+## Current runtime limitations
 
-- Browser-based installer wizard to save the workspace name.
-- Python HTTP server and JSON API.
-- SQLite database for settings, server records, connector endpoint records and activity.
-- Dashboard overview based on actual local database counts.
-- Create and delete local server records.
-- Save and remove connector endpoint records.
-- Health endpoint: `/api/health`.
-- Setup endpoint: `/api/setup`.
-- Dashboard endpoints: `/api/overview`, `/api/servers`, `/api/connectors`.
+- This runtime launches Java processes on the same machine as Nexus. It does not yet provide a secure isolated node daemon/container like Pterodactyl Wings.
+- The host must have a compatible Java runtime installed. Upload the Java server JAR as `server.jar`; accept the Minecraft EULA by creating/editing `eula.txt` if applicable.
+- File uploads are currently limited to 50 MB; no archive extraction or download flow yet.
+- FiveM/Terraria-specific runtimes, automatic game installers, allocations/ports, resource telemetry, crash recovery, scheduled tasks, backups/restores, SFTP, users/roles, and live Pterodactyl/Pelican/AMP API adapters are not implemented.
+- The current app has **no login or authorization**. Never expose this development server publicly or enter secrets into it.
 
-## Important: this is not yet a complete production hosting panel
-
-The intended product is a complete Nexus Panel, but this current version is an early working foundation. The installer configures the local workspace; it does **not** install game servers on remote hosts. Login and owner accounts, authorization, live Pterodactyl/Pelican/AMP adapters, game process controls, node telemetry, backups/restore, billing and production deployment hardening are not implemented yet.
-
-Keep the Codespaces port **Private**. Do not enter API tokens or expose this development server publicly until authentication, authorization, CSRF protection, secret encryption, rate limits, SSRF defenses and tenant isolation are implemented and tested.
+A complete hosting panel needs a hardened node agent, isolated process execution, authenticated owner/customer accounts, permissions, resource limits, port allocation, backups, and thorough tests. This repository is being built toward that goal in stages; do not treat this development build as production-safe.
 
 ## Project planning
 
