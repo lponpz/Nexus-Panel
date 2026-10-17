@@ -34,13 +34,17 @@ Reviewed sources:
 
 These are design patterns, not proof that every feature in JTG is complete or secure. Nexus must implement and test each feature independently.
 
-## Nexus security changes in this branch
+## Nexus security and runtime work implemented on the feature branch
 
-- The Python backend now binds to loopback by default (`127.0.0.1`) instead of exposing its API on all interfaces.
-- The `nexus` launcher keeps ordinary local installs on loopback. It opts into `0.0.0.0` only when it detects a Codespaces environment so port forwarding can work; it prints a warning. **Keep that Codespaces port Private.**
-- An operator can override the listener with `NEXUS_HOST`. Do not use a remote bind on a public host until authentication, authorization, CSRF protection, TLS, and hardened node isolation are implemented.
+- The Python backend binds to loopback by default (`127.0.0.1`). The `nexus` launcher opts into `0.0.0.0` only in Codespaces for port forwarding, sets the Secure cookie flag, and prints a warning. **Keep the Codespaces port Private.**
+- First-run setup creates an owner account; passwords use salted PBKDF2-HMAC-SHA256 hashes.
+- Owner sessions use random opaque HttpOnly/SameSite cookies, expire after 12 hours, and are stored by token hash. Failed sign-in attempts are throttled in memory by client IP.
+- Mutating API requests require a same-origin check and a per-session CSRF token. The browser dashboard and file tools send the token.
+- Server actions now include start/stop/restart; deleting a server stops its managed process and removes its workspace. File downloads are authenticated and size-limited.
+- A one-click Paper installer uses the current PaperMC Fill API, accepts stable builds only, checks the expected artifact host, enforces size limits, verifies the published SHA-256, and atomically installs `server.jar`. EULA acceptance requires an explicit owner confirmation.
+- GitHub Actions runs authentication integration tests, Paper installer checksum tests, Python compilation and browser JavaScript syntax checks.
 
-This is a reduction of accidental exposure, not a claim that Nexus is production secure. The current app still has no user login/authorization and the local Java runtime is not a container isolation boundary.
+These changes improve the development build but **do not make Nexus production secure**. There is still only one owner account, no per-customer authorization, no password reset/MFA, and no container-isolated node agent. The local Java runtime is not a security boundary. Keep Codespaces private.
 
 ## Integration roadmap
 
@@ -50,11 +54,12 @@ This is a reduction of accidental exposure, not a claim that Nexus is production
 - Structured logs, real health checks per component, and actionable failure output.
 - Safe update command with backup + migration check + health verification + rollback.
 
-### Phase 2 — Accounts and control-plane security (blocker before public exposure)
-- Administrator bootstrap that stores password hashes (Argon2id or scrypt), not plaintext.
-- Session rotation, secure cookie flags, CSRF protection, login throttling, audit log, and role-based authorization on every API route.
-- HTTPS / reverse-proxy trust configuration and secure default headers.
-- Private listener by default; no public unauthenticated API.
+### Phase 2 — Accounts and control-plane security (partially implemented; blocker before public exposure)
+- [x] First owner bootstrap with PBKDF2-HMAC-SHA256 password hashing.
+- [x] Opaque expiring HttpOnly/SameSite session cookie, token hash storage, CSRF tokens, same-origin checks, login throttling, and API protection.
+- [x] Private listener by default; Codespaces Secure cookies and warning.
+- [ ] Multiple users, per-server ownership, role-based authorization, session revocation UI, password reset and MFA.
+- [ ] Production HTTPS/reverse-proxy configuration, stronger security headers, and external security review.
 
 ### Phase 3 — Node agent and server isolation
 - Panel communicates with a separate node agent over authenticated TLS with rotated per-node credentials.
