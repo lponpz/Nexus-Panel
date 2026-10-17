@@ -256,6 +256,22 @@ class Handler(SimpleHTTPRequestHandler):
             if len(parts) == 4 and parts[3] == "files":
                 try: return self.json_response(200, {"ok": True, **list_files(SERVERS_DIR / sid, parse_qs(urlparse(self.path).query).get("path", [""])[0])})
                 except (ValueError, OSError) as exc: return self.json_response(400, {"ok": False, "error": str(exc)})
+            if len(parts) == 4 and parts[3] == "file-download":
+                try:
+                    target = server_path(SERVERS_DIR / sid, parse_qs(urlparse(self.path).query).get("path", [""])[0])
+                    if not target.is_file() or target.is_symlink(): return self.json_response(400, {"ok": False, "error": "File not found"})
+                    if target.stat().st_size > 200 * 1024 * 1024: return self.json_response(413, {"ok": False, "error": "File is larger than the 200 MB download limit"})
+                    from urllib.parse import quote
+                    payload = target.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + quote(target.name, safe=""))
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+                except (ValueError, OSError) as exc: return self.json_response(400, {"ok": False, "error": "Cannot download file: " + str(exc)})
             if len(parts) == 4 and parts[3] == "file-content":
                 try:
                     target = server_path(SERVERS_DIR / sid, parse_qs(urlparse(self.path).query).get("path", [""])[0])
@@ -392,7 +408,7 @@ class Handler(SimpleHTTPRequestHandler):
             parts = path.strip("/").split("/")
             if len(parts) != 4 or not server_exists(parts[2]): return self.json_response(404, {"ok": False, "error": "Server not found"})
             sid, action = parts[2], parts[3]
-            from runtime_manager import start, stop, command, change_file, _validate
+            from runtime_manager import start, stop, command, change_file, snapshot, _validate
             try:
                 if action == "start":
                     with DB_LOCK, connect_db() as db: cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
@@ -403,6 +419,15 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.json_response(200, {"ok": True, "runtime": state})
                 if action == "stop":
                     state = stop(sid); add_activity("Game process stopped", sid)
+                    return self.json_response(200, {"ok": True, "runtime": state})
+                if action == "restart":
+                    with DB_LOCK, connect_db() as db: cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
+                    launch = str(data.get("launch_command") or (cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui"))
+                    if snapshot(sid).get("running"):
+                        stop(sid)
+                    state = start(sid, SERVERS_DIR / sid, launch)
+                    with DB_LOCK, connect_db() as db: db.execute("INSERT OR REPLACE INTO server_runtime(server_id,launch_command,updated_at) VALUES(?,?,?)", (sid, launch, now()))
+                    add_activity("Game process restarted", sid)
                     return self.json_response(200, {"ok": True, "runtime": state})
                 if action == "command": return self.json_response(200, command(sid, data.get("command", "")))
                 if action == "configure":
@@ -451,7 +476,23 @@ class Handler(SimpleHTTPRequestHandler):
             row = db.execute("SELECT * FROM " + table + " WHERE id=?", (item_id,)).fetchone()
             if row is None: return self.json_response(404, {"ok": False, "error": "Record not found"})
             label = row["name"] if kind == "servers" else row["panel_type"]
-            db.execute("DELETE FROM " + table + " WHERE id=?", (item_id,))
+        if kind == "servers":
+            from runtime_manager import snapshot, stop
+            import shutil
+            if snapshot(item_id).get("running"):
+                try:
+                    stop(item_id)
+                except RuntimeError as exc:
+                    return self.auth_error(409, "Cannot delete a running server safely: " + str(exc))
+            with DB_LOCK, connect_db() as db:
+                db.execute("DELETE FROM server_runtime WHERE server_id=?", (item_id,))
+                db.execute("DELETE FROM servers WHERE id=?", (item_id,))
+            server_dir = (SERVERS_DIR / item_id).resolve()
+            if server_dir.parent == SERVERS_DIR.resolve() and server_dir.exists():
+                shutil.rmtree(server_dir)
+        else:
+            with DB_LOCK, connect_db() as db:
+                db.execute("DELETE FROM connectors WHERE id=?", (item_id,))
         add_activity("Record removed", label)
         return self.json_response(200, {"ok": True, "deleted_id": item_id})
     def translate_path(self, path):
