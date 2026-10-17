@@ -40,13 +40,62 @@ def _paper_json(url):
             raise ValueError("Paper metadata redirected to an untrusted host.")
         payload = response.read(2_000_000)
     data = json.loads(payload.decode("utf-8"))
-    if not isinstance(data, dict):
+    if not isinstance(data, (dict, list)):
         raise ValueError("Paper metadata response was invalid.")
     return data
 
 
+def _java_major():
+    try:
+        result = subprocess.run(["java", "-version"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, timeout=5, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        raise RuntimeError("Java runtime was not found. Install a compatible Java runtime and retry.")
+    if result.returncode != 0:
+        raise RuntimeError("Java runtime could not start. Install a compatible Java runtime and retry.")
+    output = result.stdout or ""
+    version_match = re.search(r'version "([^"]+)"', output)
+    if version_match:
+        version_text = version_match.group(1)
+        pieces = version_text.split(".")
+        try:
+            return int(pieces[1] if pieces[0] == "1" and len(pieces) > 1 else pieces[0])
+        except ValueError:
+            pass
+    openjdk_match = re.search(r"openjdk (\\d+)", output, re.IGNORECASE)
+    if openjdk_match:
+        return int(openjdk_match.group(1))
+    raise RuntimeError("Could not determine the installed Java version.")
+
+
+def _paper_versions():
+    catalog = _paper_json("https://fill.papermc.io/v3/projects/paper/versions")
+    entries = catalog.get("versions", []) if isinstance(catalog, dict) else []
+    result = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        item = entry.get("version", {})
+        if not isinstance(item, dict):
+            continue
+        candidate = item.get("id")
+        if not isinstance(candidate, str) or not re.fullmatch(r"\\d+\\.\\d+(?:\\.\\d+)?", candidate):
+            continue
+        java_info = item.get("java", {})
+        java_version = java_info.get("version", {}) if isinstance(java_info, dict) else {}
+        minimum_java = java_version.get("minimum", 21) if isinstance(java_version, dict) else 21
+        try:
+            minimum_java = int(minimum_java)
+        except (ValueError, TypeError):
+            minimum_java = 21
+        support_info = item.get("support", {})
+        support_status = support_info.get("status", "") if isinstance(support_info, dict) else ""
+        result.append({"id": candidate, "minimum_java": minimum_java, "support": str(support_status).upper()})
+    return result
+
+
 def install_paper(directory, version="latest"):
-    """Download the latest stable Paper build and verify its SHA-256 before atomic install."""
+    """Install the newest compatible stable Paper build, verifying SHA-256 before atomic replacement."""
     root = Path(directory).resolve()
     root.mkdir(parents=True, exist_ok=True)
     if root.is_symlink():
@@ -54,24 +103,36 @@ def install_paper(directory, version="latest"):
     jar = root / "server.jar"
     if jar.exists():
         raise ValueError("server.jar already exists. Move or delete it before installing Paper.")
-    if version != "latest" and not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", str(version)):
+    if version != "latest" and not re.fullmatch(r"\\d+\\.\\d+(?:\\.\\d+)?", str(version)):
         raise ValueError("Choose 'latest' or a Minecraft version such as 1.21.11.")
+    java_major = _java_major()
+    versions = _paper_versions()
     if version == "latest":
-        catalog = _paper_json("https://fill.papermc.io/v3/projects/paper/versions")
-        versions = catalog.get("versions", [])
-        ids = []
-        for entry in versions:
-            if isinstance(entry, dict):
-                item = entry.get("version", {})
-                candidate = item.get("id") if isinstance(item, dict) else None
-                if isinstance(candidate, str) and re.fullmatch(r"\d+\.\d+(?:\.\d+)?", candidate):
-                    ids.append(candidate)
-        if not ids:
-            raise RuntimeError("Paper did not return any supported Minecraft versions.")
-        version = ids[0]
-    metadata = _paper_json("https://fill.papermc.io/v3/projects/paper/versions/" + version + "/builds/latest")
-    if str(metadata.get("channel", "")).upper() != "STABLE":
-        raise RuntimeError("Paper API did not return a stable build; refusing unstable builds.")
+        compatible = [v for v in versions if v["minimum_java"] <= java_major]
+        supported = [v for v in compatible if v["support"] in ("SUPPORTED", "SUPPORTING", "")]
+        choices = supported or compatible
+        if not choices:
+            required = min((v["minimum_java"] for v in versions), default=21)
+            raise RuntimeError("No listed Paper release supports Java " + str(java_major) + ". Install Java " + str(required) + " or newer.")
+        version_info = choices[0]
+        version = version_info["id"]
+    else:
+        version_info = next((v for v in versions if v["id"] == version), None)
+        if version_info is None:
+            raise ValueError("Paper did not list Minecraft version " + version + ". Check the version and try again.")
+        if version_info["minimum_java"] > java_major:
+            raise RuntimeError("Paper " + version + " requires Java " + str(version_info["minimum_java"]) + " or newer; this host has Java " + str(java_major) + ".")
+
+    builds_url = "https://fill.papermc.io/v3/projects/paper/versions/" + version + "/builds?channel=STABLE"
+    builds = _paper_json(builds_url)
+    if isinstance(builds, dict):
+        builds = builds.get("builds", [])
+    if not isinstance(builds, list):
+        raise RuntimeError("Paper returned an invalid stable-build list.")
+    stable_builds = [item for item in builds if isinstance(item, dict) and str(item.get("channel", "")).upper() == "STABLE"]
+    if not stable_builds:
+        raise RuntimeError("No stable Paper build is available for Minecraft " + version + ".")
+    metadata = stable_builds[0]
     download = metadata.get("downloads", {}).get("server:default", {})
     url = download.get("url", "")
     checksum = download.get("checksums", {}).get("sha256", "")
@@ -80,7 +141,7 @@ def install_paper(directory, version="latest"):
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.hostname != "fill-data.papermc.io":
         raise ValueError("Paper returned an untrusted download URL.")
-    if not isinstance(name, str) or not name.endswith(".jar") or "/" in name or "\\" in name:
+    if not isinstance(name, str) or not name.endswith(".jar") or "/" in name or "\\\\" in name:
         raise ValueError("Paper returned an invalid artifact name.")
     if not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", checksum):
         raise ValueError("Paper did not provide a valid SHA-256 checksum.")
@@ -116,41 +177,14 @@ def install_paper(directory, version="latest"):
         os.replace(str(temporary_path), str(jar))
         temporary_path = None
         return {"installed": True, "game": "Minecraft", "software": "Paper", "version": version,
-                "build": metadata.get("id"), "file": "server.jar", "size": received, "sha256": digest.hexdigest()}
+                "build": metadata.get("id"), "java_major": java_major, "file": "server.jar",
+                "size": received, "sha256": digest.hexdigest()}
     finally:
         if temporary_path is not None:
             try:
                 temporary_path.unlink(missing_ok=True)
             except OSError:
                 pass
-
-
-def _validate(command):
-    if not isinstance(command, str) or not command.strip() or len(command) > 500:
-        raise ValueError("Enter a launch command under 500 characters.")
-    if any(ch in command for ch in (";", "|", "&", ">", "<", chr(96), "$", "\n", "\r")):
-        raise ValueError("Launch command cannot contain shell operators.")
-    try:
-        args = shlex.split(command)
-    except ValueError:
-        raise ValueError("Launch command quoting is invalid.")
-    if not args or Path(args[0]).name not in ("java", "java.exe"):
-        raise ValueError("Only Java server processes can be launched by this adapter.")
-    if any(arg.startswith(("/", "~")) for arg in args[1:]):
-        raise ValueError("Use paths relative to the server folder.")
-    return args
-
-
-def _reader(server_id, process):
-    for line in iter(process.stdout.readline, ""):
-        with _LOCK:
-            item = _PROCESSES.get(server_id)
-            if item:
-                item["logs"].append({"time": _now(), "stream": "output", "text": line.rstrip()[:4000]})
-    with _LOCK:
-        item = _PROCESSES.get(server_id)
-        if item:
-            item["logs"].append({"time": _now(), "stream": "system", "text": "Process exited with code " + str(process.poll())})
 
 
 def start(server_id, directory, command):
