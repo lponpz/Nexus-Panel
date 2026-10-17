@@ -7,6 +7,13 @@ from __future__ import annotations
 import shlex
 import subprocess
 import threading
+import hashlib
+import json
+import os
+import re
+import tempfile
+import urllib.request
+from urllib.parse import urlparse
 from collections import deque
 from pathlib import Path
 from datetime import datetime, timezone
@@ -18,6 +25,104 @@ _LOG_LIMIT = 500
 
 def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _paper_json(url):
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname != "fill.papermc.io":
+        raise ValueError("Refusing to contact an untrusted Paper metadata URL.")
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "NexusPanel/0.1 (https://github.com/lponpz/Nexus-Panel)", "Accept": "application/json"}
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        if urlparse(response.geturl()).hostname != "fill.papermc.io":
+            raise ValueError("Paper metadata redirected to an untrusted host.")
+        payload = response.read(2_000_000)
+    data = json.loads(payload.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Paper metadata response was invalid.")
+    return data
+
+
+def install_paper(directory, version="latest"):
+    """Download the latest stable Paper build and verify its SHA-256 before atomic install."""
+    root = Path(directory).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    if root.is_symlink():
+        raise ValueError("Server folder cannot be a symbolic link.")
+    jar = root / "server.jar"
+    if jar.exists():
+        raise ValueError("server.jar already exists. Move or delete it before installing Paper.")
+    if version != "latest" and not re.fullmatch(r"\\d+\\.\\d+(?:\\.\\d+)?", str(version)):
+        raise ValueError("Choose 'latest' or a Minecraft version such as 1.21.11.")
+    if version == "latest":
+        catalog = _paper_json("https://fill.papermc.io/v3/projects/paper/versions")
+        versions = catalog.get("versions", [])
+        ids = []
+        for entry in versions:
+            if isinstance(entry, dict):
+                item = entry.get("version", {})
+                candidate = item.get("id") if isinstance(item, dict) else None
+                if isinstance(candidate, str) and re.fullmatch(r"\\d+\\.\\d+(?:\\.\\d+)?", candidate):
+                    ids.append(candidate)
+        if not ids:
+            raise RuntimeError("Paper did not return any supported Minecraft versions.")
+        version = ids[0]
+    metadata = _paper_json("https://fill.papermc.io/v3/projects/paper/versions/" + version + "/builds/latest")
+    if str(metadata.get("channel", "")).upper() != "STABLE":
+        raise RuntimeError("Paper API did not return a stable build; refusing unstable builds.")
+    download = metadata.get("downloads", {}).get("server:default", {})
+    url = download.get("url", "")
+    checksum = download.get("checksums", {}).get("sha256", "")
+    name = download.get("name", "")
+    size = download.get("size")
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname != "fill-data.papermc.io":
+        raise ValueError("Paper returned an untrusted download URL.")
+    if not isinstance(name, str) or not name.endswith(".jar") or "/" in name or "\\\\" in name:
+        raise ValueError("Paper returned an invalid artifact name.")
+    if not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", checksum):
+        raise ValueError("Paper did not provide a valid SHA-256 checksum.")
+    if not isinstance(size, int) or size < 1 or size > 100 * 1024 * 1024:
+        raise ValueError("Paper artifact size is missing or exceeds the 100 MB limit.")
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "NexusPanel/0.1 (https://github.com/lponpz/Nexus-Panel)"}
+    )
+    temporary_path = None
+    digest = hashlib.sha256()
+    received = 0
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            final_host = urlparse(response.geturl()).hostname
+            if final_host != "fill-data.papermc.io":
+                raise ValueError("Paper download redirected to an untrusted host.")
+            with tempfile.NamedTemporaryFile(prefix=".nexus-paper-", suffix=".tmp", dir=str(root), delete=False) as tmp:
+                temporary_path = Path(tmp.name)
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    received += len(chunk)
+                    if received > size or received > 100 * 1024 * 1024:
+                        raise RuntimeError("Paper download exceeded the expected artifact size.")
+                    digest.update(chunk)
+                    tmp.write(chunk)
+        if received != size:
+            raise RuntimeError("Paper download size did not match its published metadata.")
+        if digest.hexdigest().lower() != checksum.lower():
+            raise RuntimeError("Paper SHA-256 verification failed; the downloaded file was discarded.")
+        os.replace(str(temporary_path), str(jar))
+        temporary_path = None
+        return {"installed": True, "game": "Minecraft", "software": "Paper", "version": version,
+                "build": metadata.get("id"), "file": "server.jar", "size": received, "sha256": digest.hexdigest()}
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _validate(command):
