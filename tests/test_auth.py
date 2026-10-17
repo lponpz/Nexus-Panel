@@ -165,6 +165,20 @@ class AuthIntegrationTests(unittest.TestCase):
         self.assertEqual(disabled["schedule"]["enabled"], 0)
         self.assertIsNone(disabled["schedule"]["next_run_at"])
 
+    def test_host_and_server_metrics_are_real_api_responses(self):
+        cookie, csrf = self.create_owner()
+        status, _, host = request("/api/host-metrics", cookie=cookie)
+        self.assertEqual(status, 200, host)
+        self.assertGreaterEqual(host["cpu_count"], 1)
+        self.assertGreater(host["disk_total_gb"], 0)
+        payload = {"name": "Metrics Test", "game": "Minecraft", "panel": "Nexus (local)", "status": "Configured"}
+        status, _, created = request("/api/servers", "POST", payload, cookie=cookie, csrf=csrf)
+        self.assertEqual(status, 201, created)
+        server_id = created["item"]["id"]
+        status, _, metrics = request("/api/servers/" + server_id + "/metrics", cookie=cookie)
+        self.assertEqual(status, 200, metrics)
+        self.assertFalse(metrics["running"])
+
 
 if __name__ == "__main__":
     try:
