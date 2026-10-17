@@ -39,6 +39,7 @@ Open the installer/dashboard URL printed by the launcher. If it does not open au
 - This runtime launches Java processes on the same machine as Nexus. It does not yet provide a secure isolated node daemon/container like Pterodactyl Wings.
 - The host must have a compatible Java runtime installed. Upload the Java server JAR as `server.jar`; accept the Minecraft EULA by creating/editing `eula.txt` if applicable.
 - File uploads are currently limited to 50 MB and downloads to 200 MB; archive extraction is not implemented.
+- Metrics are host/process observations only; container-enforced resource quotas and remote node telemetry are not implemented.
 - Backups are stored locally on the same host/disk; remote encrypted backup storage and isolated restore drills are not implemented.
 - The Paper installer requires outbound HTTPS access to PaperMC's official Fill API and download host. Vanilla, Fabric, Forge, FiveM and Terraria auto-installers are not implemented yet.
 - FiveM/Terraria-specific runtimes, automatic game installers, allocations/ports, resource telemetry, crash recovery, scheduled tasks, backups/restores, SFTP, users/roles, and live Pterodactyl/Pelican/AMP API adapters are not implemented.
