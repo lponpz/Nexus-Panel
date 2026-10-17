@@ -46,7 +46,7 @@ def request(path, method="GET", payload=None, cookie=None, csrf=None):
 class AuthIntegrationTests(unittest.TestCase):
     def setUp(self):
         with server.DB_LOCK, server.connect_db() as db:
-            for table in ("sessions", "users", "servers", "server_runtime", "connectors", "activities", "settings"):
+            for table in ("sessions", "backups", "users", "servers", "server_runtime", "connectors", "activities", "settings"):
                 db.execute("DELETE FROM " + table)
 
     def create_owner(self):
@@ -125,6 +125,25 @@ class AuthIntegrationTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(req, timeout=3)
         self.assertEqual(caught.exception.code, 404)
+
+    def test_backup_and_restore_api_creates_pre_restore_safety_backup(self):
+        cookie, csrf = self.create_owner()
+        payload = {"name": "Backup Test", "game": "Minecraft", "panel": "Nexus (local)", "status": "Configured"}
+        status, _, data = request("/api/servers", "POST", payload, cookie=cookie, csrf=csrf)
+        self.assertEqual(status, 201, data)
+        server_id = data["item"]["id"]
+        folder = server.SERVERS_DIR / server_id
+        status, _, backup_response = request("/api/servers/" + server_id + "/backup", "POST", {}, cookie=cookie, csrf=csrf)
+        self.assertEqual(status, 201, backup_response)
+        backup_id = backup_response["backup"]["id"]
+        (folder / "new-after-backup.txt").write_text("temporary", encoding="utf-8")
+        status, _, restore_response = request("/api/servers/" + server_id + "/restore", "POST", {"backup_id": backup_id}, cookie=cookie, csrf=csrf)
+        self.assertEqual(status, 200, restore_response)
+        self.assertFalse((folder / "new-after-backup.txt").exists())
+        self.assertTrue(restore_response["pre_restore_backup_id"])
+        status, _, backups_response = request("/api/servers/" + server_id + "/backups", cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(backups_response["items"]), 2)
 
 
 if __name__ == "__main__":
