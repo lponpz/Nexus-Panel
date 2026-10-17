@@ -59,6 +59,22 @@ class ModrinthInstallerTests(unittest.TestCase):
                 runtime_manager.install_modrinth_plugin(self.root,"Example Plugin","1.21.11")
         self.assertFalse((self.root/"plugins"/"ExamplePlugin-1.9.2.jar").exists())
         self.assertEqual(list((self.root/"plugins").iterdir()),[])
+    def fake_mod_urlopen(self, request, timeout=0):
+        url = request.full_url if hasattr(request,"full_url") else str(request)
+        if url.startswith("https://api.modrinth.com/v2/search?"):
+            body = json.dumps({"hits":[{"project_type":"mod","slug":"ExampleMod","title":"Example Mod"}]}).encode()
+            return FakeResponse(body,"https://api.modrinth.com/v2/search")
+        if url.startswith("https://api.modrinth.com/v2/project/ExampleMod/version?"):
+            body = json.dumps([{"version_number":"1.9.2","version_type":"release","files":[self.file_info()]}]).encode()
+            return FakeResponse(body,"https://api.modrinth.com/v2/project/ExampleMod/version")
+        if url.startswith("https://cdn.modrinth.com/"):
+            return FakeResponse(self.artifact,url)
+        raise AssertionError("Unexpected URL: "+url)
+    def test_installs_compatible_fabric_mod(self):
+        with patch.object(runtime_manager.urllib.request,"urlopen",side_effect=self.fake_mod_urlopen):
+            result=runtime_manager.install_modrinth_mod(self.root,"Example Mod","1.21.11")
+        self.assertEqual(result["version"],"1.9.2")
+        self.assertEqual((self.root/"mods"/"ExamplePlugin-1.9.2.jar").read_bytes(),self.artifact)
     def test_refuses_unknown_game_version_before_network(self):
         with patch.object(runtime_manager.urllib.request,"urlopen") as urlopen:
             with self.assertRaisesRegex(ValueError,"could not detect"):
