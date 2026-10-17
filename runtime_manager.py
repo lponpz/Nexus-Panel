@@ -26,6 +26,35 @@ _LOG_LIMIT = 500
 _METRIC_SAMPLES = {}
 
 
+def _agent_enabled():
+    return bool(os.environ.get("NEXUS_NODE_AGENT_URL", "").strip()) and os.environ.get("NEXUS_NODE_AGENT_MODE") != "1"
+
+
+def _agent_request(method, path, payload=None, timeout=30):
+    base = os.environ.get("NEXUS_NODE_AGENT_URL", "").rstrip("/")
+    parsed = urlparse(base)
+    if parsed.scheme != "http" or parsed.hostname not in ("127.0.0.1", "localhost", "::1") or parsed.port is None:
+        raise RuntimeError("Nexus node agent must use a local loopback HTTP endpoint.")
+    token = os.environ.get("NEXUS_NODE_AGENT_TOKEN", "")
+    if len(token) < 32:
+        raise RuntimeError("Nexus node agent authentication token is missing.")
+    body = json.dumps(payload or {}).encode("utf-8") if payload is not None else None
+    request = urllib.request.Request(base + path, data=body, method=method,
+        headers={"X-Nexus-Node-Token": token, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            result = json.loads(response.read(2_000_000).decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try: result = json.loads(exc.read(100_000).decode("utf-8"))
+        except Exception: result = {}
+        raise RuntimeError(result.get("error", "Node agent request failed with HTTP " + str(exc.code)))
+    except (OSError, TimeoutError, ValueError) as exc:
+        raise RuntimeError("Nexus node agent is unavailable: " + str(exc))
+    if not isinstance(result, dict) or result.get("ok") is False:
+        raise RuntimeError(result.get("error", "Node agent returned an invalid response") if isinstance(result, dict) else "Node agent returned an invalid response")
+    return result
+
+
 def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -564,6 +593,8 @@ def _reader(server_id, process):
 
 
 def start(server_id, directory, command):
+    if _agent_enabled():
+        return _agent_request("POST", "/start", {"server_id": server_id, "command": command}, timeout=60)
     args = _validate(command)
     root = Path(directory).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -584,6 +615,8 @@ def start(server_id, directory, command):
 
 
 def snapshot(server_id):
+    if _agent_enabled():
+        return _agent_request("GET", "/snapshot?server_id=" + urllib.parse.quote(str(server_id)))
     with _LOCK:
         item = _PROCESSES.get(server_id)
         if not item:
@@ -592,6 +625,8 @@ def snapshot(server_id):
 
 
 def process_metrics(server_id):
+    if _agent_enabled():
+        return _agent_request("GET", "/metrics?server_id=" + urllib.parse.quote(str(server_id)))
     with _LOCK:
         item = _PROCESSES.get(server_id)
         if not item:
@@ -661,6 +696,8 @@ def host_metrics(storage_path):
 
 
 def logs(server_id):
+    if _agent_enabled():
+        return _agent_request("GET", "/logs?server_id=" + urllib.parse.quote(str(server_id)))
     with _LOCK:
         item = _PROCESSES.get(server_id)
         return {"running": bool(item and item["process"].poll() is None), "logs": list(item["logs"]) if item else []}
@@ -695,6 +732,8 @@ def shutdown_all():
 
 
 def command(server_id, text):
+    if _agent_enabled():
+        return _agent_request("POST", "/command", {"server_id": server_id, "command": text})
     text = str(text).strip()
     if not text or len(text) > 1000 or any(ord(ch) < 32 and ch != "\t" for ch in text):
         raise ValueError("Console command must be 1–1000 characters.")
@@ -712,6 +751,8 @@ def command(server_id, text):
 
 
 def stop(server_id):
+    if _agent_enabled():
+        return _agent_request("POST", "/stop", {"server_id": server_id}, timeout=35)
     with _LOCK:
         item = _PROCESSES.get(server_id)
         if not item or item["process"].poll() is not None:
