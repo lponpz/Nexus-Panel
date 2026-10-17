@@ -184,7 +184,10 @@ class Handler(SimpleHTTPRequestHandler):
         if path in public:
             return True
         if not configured():
-            return True
+            if path in public:
+                return True
+            self.auth_error(403, "Complete the first-run owner setup before using the API.")
+            return False
         session = current_session(self)
         if not session:
             self.auth_error(401, "Login required. Open login.html and sign in.")
@@ -211,7 +214,7 @@ class Handler(SimpleHTTPRequestHandler):
         return data
     def do_GET(self):
         path = urlparse(self.path).path
-        if path in ("/", "/index.html") and configured():
+        if path in ("/", "/index.html", "/studio.html") and configured():
             if not has_owner():
                 self.send_response(302); self.send_header("Location", "/installer.html"); self.end_headers(); return
             if not current_session(self):
