@@ -588,8 +588,69 @@ class Handler(SimpleHTTPRequestHandler):
             return str(ROOT / "__not_found__")
         return str(target)
 
+def _run_scheduled_backup(server_id, interval_hours):
+    from backup_manager import create_backup
+    from runtime_manager import snapshot, command
+    paused = False
+    try:
+        if not server_exists(server_id):
+            with DB_LOCK, connect_db() as db:
+                db.execute("UPDATE backup_schedules SET enabled=0,next_run_at=NULL,updated_at=? WHERE server_id=?", (now(), server_id))
+            return
+        next_run = (datetime.now(timezone.utc) + timedelta(hours=interval_hours)).isoformat(timespec="seconds")
+        with DB_LOCK, connect_db() as db:
+            db.execute("UPDATE backup_schedules SET next_run_at=?,updated_at=? WHERE server_id=?", (next_run, now(), server_id))
+        if snapshot(server_id).get("running"):
+            command(server_id, "save-off")
+            paused = True
+            command(server_id, "save-all flush")
+            time.sleep(2)
+        backup_id = str(uuid.uuid4())
+        result = create_backup(SERVERS_DIR / server_id, BACKUPS_DIR / server_id, backup_id)
+        created = now()
+        with DB_LOCK, connect_db() as db:
+            db.execute("INSERT INTO backups(id,server_id,filename,size,sha256,created_at) VALUES(?,?,?,?,?,?)",
+                       (backup_id, server_id, result["filename"], result["size"], result["sha256"], created))
+            db.execute("UPDATE backup_schedules SET last_run_at=?,updated_at=? WHERE server_id=?", (created, created, server_id))
+            stale = [dict(row) for row in db.execute("SELECT id,filename FROM backups WHERE server_id=? ORDER BY created_at DESC LIMIT -1 OFFSET 20", (server_id,))]
+            for item in stale:
+                db.execute("DELETE FROM backups WHERE id=?", (item["id"],))
+        for item in stale:
+            path = (BACKUPS_DIR / server_id / item["filename"]).resolve()
+            if path.parent == (BACKUPS_DIR / server_id).resolve() and path.exists():
+                path.unlink()
+        add_activity("Scheduled backup completed", server_id + " · " + result["filename"])
+    except Exception as exc:
+        retry_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(timespec="seconds")
+        with DB_LOCK, connect_db() as db:
+            db.execute("UPDATE backup_schedules SET next_run_at=?,updated_at=? WHERE server_id=?", (retry_at, now(), server_id))
+        add_activity("Scheduled backup failed", server_id + " · " + str(exc)[:180])
+    finally:
+        if paused:
+            try:
+                command(server_id, "save-on")
+            except Exception:
+                add_activity("Backup save-on recovery failed", server_id + " · check server console")
+
+
+def _backup_scheduler_loop():
+    while True:
+        time.sleep(30)
+        try:
+            with DB_LOCK, connect_db() as db:
+                due = [dict(row) for row in db.execute(
+                    "SELECT server_id,interval_hours FROM backup_schedules WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at<=?",
+                    (now(),)
+                )]
+            for item in due:
+                _run_scheduled_backup(item["server_id"], item["interval_hours"])
+        except Exception as exc:
+            print("[nexus] Backup scheduler error: " + str(exc))
+
+
 if __name__ == "__main__":
     init_db()
+    threading.Thread(target=_backup_scheduler_loop, daemon=True, name="nexus-backup-scheduler").start()
     print("Nexus Panel local development backend")
     print("Database:", DB_PATH)
     print("Listening on " + HOST + ":" + str(PORT))
