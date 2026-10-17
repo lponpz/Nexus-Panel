@@ -7,6 +7,7 @@ A planned feature is not complete until implemented, tested, and documented. The
 - [x] SQLite-backed server/connector records and activity feed.
 - [x] First-run owner bootstrap, password hashing, expiring sessions, login throttling and CSRF-protected mutations.
 - [x] Per-server local Java process start/stop/restart, console commands/logs, file CRUD, upload and download.
+- [x] Minecraft Player Manager: live online player list, kick/ban/unban, operator and whitelist actions, gamemode changes, and live online inventory inspection.
 - [x] One-click stable Paper installer with published SHA-256 verification and explicit EULA confirmation.
 - [x] Official Fabric server launcher selection based on installed Java compatibility, plus compatible Modrinth Fabric mod installation with SHA-512/SHA-1 verification.
 - [x] Modrinth Paper plugin installer: auto-select latest stable compatible version and verify the artifact checksum before atomic install.
