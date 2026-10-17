@@ -408,8 +408,18 @@ class Handler(SimpleHTTPRequestHandler):
             parts = path.strip("/").split("/")
             if len(parts) != 4 or not server_exists(parts[2]): return self.json_response(404, {"ok": False, "error": "Server not found"})
             sid, action = parts[2], parts[3]
-            from runtime_manager import start, stop, command, change_file, snapshot, _validate
+            from runtime_manager import start, stop, command, change_file, snapshot, install_paper, _validate
             try:
+                if action == "install":
+                    with DB_LOCK, connect_db() as db:
+                        game_row = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
+                    if not game_row or game_row["game"] != "Minecraft":
+                        raise ValueError("The Paper installer is available only for Minecraft servers.")
+                    if snapshot(sid).get("running"):
+                        raise RuntimeError("Stop the server before installing or replacing server software.")
+                    result = install_paper(SERVERS_DIR / sid, str(data.get("version", "latest")))
+                    add_activity("Paper server software installed", sid + " · " + result["version"])
+                    return self.json_response(200, {"ok": True, "install": result})
                 if action == "start":
                     with DB_LOCK, connect_db() as db: cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
                     launch = str(data.get("launch_command") or (cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui"))
