@@ -55,6 +55,9 @@ def init_db():
           id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT NOT NULL,
           detail TEXT NOT NULL, created_at TEXT NOT NULL
         );
+                CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
         """)
         count = db.execute("SELECT COUNT(*) FROM activities").fetchone()[0]
         if not count:
