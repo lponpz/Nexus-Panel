@@ -1,0 +1,11 @@
+{
+  "name": "Nexus Panel",
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "Nexus Panel Dashboard",
+      "onAutoForward": "openBrowser",
+      "protocol": "https"
+    }
+  }
+}
