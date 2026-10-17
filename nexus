@@ -66,6 +66,7 @@ else
   if [[ -z "${NEXUS_HOST:-}" ]]; then
     if [[ -n "${CODESPACE_NAME:-}" ]]; then
       export NEXUS_HOST="0.0.0.0"
+      export NEXUS_COOKIE_SECURE="${NEXUS_COOKIE_SECURE:-1}"
     else
       export NEXUS_HOST="127.0.0.1"
     fi
