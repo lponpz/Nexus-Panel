@@ -42,3 +42,6 @@ git clone https://github.com/lponpz/Nexus-Panel.git && cd Nexus-Panel && bash ./
 ```
 
 Use number keys **1–9** to open menu actions and **0** to exit. This currently launches the prototype TUI; production installation and destructive operations are not yet implemented. See [one-command launch notes](docs/ONE_COMMAND_LAUNCH.md).
+## Codespaces dashboard port
+
+The `bash ./nexus` launcher starts the static dashboard on port 8000 and then opens the terminal Control Center. Codespaces is configured to forward port 8000 and open the dashboard in a browser. If it does not open automatically, use the **Ports** tab and click the forwarded URL. Details: [Codespaces dashboard instructions](docs/CODESPACES_DASHBOARD.md).
