@@ -482,7 +482,7 @@ class Handler(SimpleHTTPRequestHandler):
             plan_id = str(data.get("plan_id", ""))
             customer_name = str(data.get("customer_name", "")).strip()
             customer_email = str(data.get("customer_email", "")).strip().lower()
-            if not customer_name or len(customer_name) > 120 or not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+", customer_email):
+            if not customer_name or len(customer_name) > 120 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", customer_email):
                 return self.json_response(400, {"ok": False, "error": "Enter a customer name and valid email address."})
             with DB_LOCK, connect_db() as db:
                 plan = db.execute("SELECT * FROM billing_plans WHERE id=? AND enabled=1", (plan_id,)).fetchone()
