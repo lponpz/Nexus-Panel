@@ -565,9 +565,28 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
     def do_POST(self):
         path = urlparse(self.path).path
-        if path.startswith("/api/") and path not in ("/api/auth/login", "/api/auth/logout", "/api/setup") and not path.startswith("/api/servers/"):
+        if path.startswith("/api/") and path not in ("/api/auth/login", "/api/auth/logout", "/api/auth/change-password", "/api/setup") and not path.startswith("/api/servers/"):
             if not self.api_authenticated(): return
             if not owner_only(self): return
+        if path == "/api/auth/change-password":
+            if not self.api_authenticated(): return
+            try: data = self.read_json()
+            except ValueError as exc: return self.json_response(400, {"ok": False, "error": str(exc)})
+            session = current_session(self)
+            current_password = data.get("current_password", "")
+            new_password = data.get("new_password", "")
+            with DB_LOCK, connect_db() as db:
+                user = db.execute("SELECT password_hash,username FROM users WHERE id=?", (session["user_id"],)).fetchone()
+            if not isinstance(current_password, str) or not password_matches(current_password, user["password_hash"]):
+                return self.json_response(400, {"ok": False, "error": "Current password is incorrect."})
+            if not isinstance(new_password, str) or len(new_password) < 12 or len(new_password) > 1024:
+                return self.json_response(400, {"ok": False, "error": "New password must be at least 12 characters."})
+            token = next((v.strip().split("=",1)[1] for v in self.headers.get("Cookie", "").split(";") if v.strip().startswith("nexus_session=")), "")
+            with DB_LOCK, connect_db() as db:
+                db.execute("UPDATE users SET password_hash=? WHERE id=?", (password_hash(new_password), session["user_id"]))
+                db.execute("DELETE FROM sessions WHERE user_id=? AND token_hash<>?", (session["user_id"], _token_digest(token)))
+            add_activity("Account password changed", user["username"])
+            return self.json_response(200, {"ok": True, "message": "Password updated. Other sessions have been signed out."})
         if path == "/api/auth/logout":
             if not self.api_authenticated():
                 return
