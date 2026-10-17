@@ -1,1 +1,25 @@
-# Nexus-Panel
+# Nexus Panel
+
+**Universal game-hosting control center — Phase 1 prototype**
+
+Nexus Panel is being designed as a premium, Blue Neon, responsive dashboard that can unify supported game hosting panels through a capability-aware adapter architecture.
+
+## Start here
+- Open `index.html` in a modern browser to preview the responsive dashboard.
+- See [Universal Panel Adapter Architecture](docs/UNIVERSAL_ADAPTER_ARCHITECTURE.md).
+- See the [Master Roadmap](docs/ROADMAP.md) for all agreed future feature groups.
+
+## Phase 1 prototype includes
+- Responsive dashboard layout and mobile navigation.
+- Demo overview cards, connector list, activity feed, server table and quick actions.
+- UI-only connector setup dialog and local demo search.
+- Architecture and security design notes.
+
+## Important
+This is a frontend prototype. Dashboard figures are sample data. It does not yet authenticate users, contact panel APIs, control servers, store credentials, process billing, or perform backups. Do not enter real API tokens into the demo UI.
+
+## Planned production direction
+A typed frontend, secure backend API, tenant-aware authorization, connector registry, encrypted credential vault, job queue, audit trail and adapter contract tests. The actual production stack will be finalized before backend implementation.
+
+## Security principles
+Least privilege, tenant isolation, encrypted secrets, secret redaction, SSRF protection, server-side authorization, audit trails, idempotent operations, and approval gates for high-impact actions.
