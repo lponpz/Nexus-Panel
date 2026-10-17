@@ -768,7 +768,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json_response(400, {"ok": False, "error": "Username must be 3–32 characters: letters, numbers, dot, underscore or hyphen."})
             if not isinstance(password, str) or len(password) < 12 or len(password) > 1024:
                 return self.json_response(400, {"ok": False, "error": "Initial password must be at least 12 characters."})
-            if email and (len(email) > 254 or not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email)):
+            if email and (len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email)):
                 return self.json_response(400, {"ok": False, "error": "Enter a valid customer email or leave it blank."})
             customer_id = str(uuid.uuid4())
             try:
