@@ -33,3 +33,12 @@ python3 tools/nexusctl.py
 ```
 
 Menu options include Install, Update, Reinstall, Delete, Add User, Add Owner, Backups & Recovery, Panel Connectors, and Logs & Health. **At this stage these actions are planning-only:** the TUI does not make system changes or connect to panel APIs. See [Terminal Control Center safety and implementation plan](docs/TERMINAL_CONTROL_CENTER.md).
+## One-command terminal menu
+
+Clone the repository and immediately open the terminal Control Center:
+
+```bash
+git clone https://github.com/lponpz/Nexus-Panel.git && cd Nexus-Panel && bash ./nexus
+```
+
+Use number keys **1–9** to open menu actions and **0** to exit. This currently launches the prototype TUI; production installation and destructive operations are not yet implemented. See [one-command launch notes](docs/ONE_COMMAND_LAUNCH.md).
