@@ -82,6 +82,12 @@ class NetworkAddressTests(unittest.TestCase):
         self.assertEqual(status,201,second)
         status,headers2,login2=request("/api/auth/login","POST",{"username":"customer-two","password":"customer-two-initial-password"})
         self.assertEqual(status,200,login2)
+        status,_,changed=request("/api/auth/change-password","POST",{"current_password":"customer-initial-password","new_password":"customer-new-password-123"},customer_cookie,login["csrf_token"])
+        self.assertEqual(status,200,changed)
+        status,_,old_login=request("/api/auth/login","POST",{"username":"customer-one","password":"customer-initial-password"})
+        self.assertEqual(status,401,old_login)
+        status,_,new_login=request("/api/auth/login","POST",{"username":"customer-one","password":"customer-new-password-123"})
+        self.assertEqual(status,200,new_login)
         status,_,other=request("/api/servers/"+created["item"]["id"],cookie=headers2.get("Set-Cookie"))
         self.assertEqual(status,404,other)
 
