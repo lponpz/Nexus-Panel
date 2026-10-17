@@ -62,7 +62,18 @@ else
     exit 1
   fi
   export NEXUS_PORT="$PORT"
-  echo "Starting Nexus Panel backend on port $PORT..."
+  # Codespaces needs a forwarded listener; local installs remain loopback-only by default.
+  if [[ -z "${NEXUS_HOST:-}" ]]; then
+    if [[ -n "${CODESPACE_NAME:-}" ]]; then
+      export NEXUS_HOST="0.0.0.0"
+    else
+      export NEXUS_HOST="127.0.0.1"
+    fi
+  fi
+  echo "Starting Nexus Panel backend on $NEXUS_HOST:$PORT..."
+  if [[ "$NEXUS_HOST" != "127.0.0.1" && "$NEXUS_HOST" != "::1" && "$NEXUS_HOST" != "localhost" ]]; then
+    echo "SECURITY WARNING: remote binding has no login/auth yet. Keep this Codespaces port PRIVATE."
+  fi
   nohup python3 "$ROOT/server.py" > /tmp/nexus-dashboard.log 2>&1 &
   PID=$!
   echo "$PID" > /tmp/nexus-dashboard.pid

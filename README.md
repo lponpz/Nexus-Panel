@@ -46,3 +46,8 @@ A complete hosting panel needs a hardened node agent, isolated process execution
 - [Universal panel adapter architecture](docs/UNIVERSAL_ADAPTER_ARCHITECTURE.md)
 - [Terminal Control Center plan](docs/TERMINAL_CONTROL_CENTER.md)
 - [Codespaces dashboard instructions](docs/CODESPACES_DASHBOARD.md)
+- [JTG installer security audit and Nexus integration roadmap](docs/JTG_AUDIT_AND_INTEGRATION.md)
+
+## Security note
+
+The local launcher binds to loopback by default. In GitHub Codespaces it binds to `0.0.0.0` for port forwarding and prints a warning; keep the forwarded port **Private**. This development build still has no authentication or authorization and is not safe for public internet exposure.
