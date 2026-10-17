@@ -5,13 +5,13 @@ const pages = {
   "Overview":["Your hosting, <span>in one place.</span>","A unified command center for your saved game hosting records."],
   "Game Servers":["Every server, <span>one view.</span>","Open a server console, run game commands, upload files and edit its saved settings."],
   "Panel Connectors":["Connect your <span>hosting world.</span>","Review saved endpoints. Live authentication and external panel control still require adapters."],
-  "Nodes & Capacity":["Capacity without <span>guesswork.</span>","Node telemetry appears here once a real node agent is implemented."],
-  "Backups & Recovery":["Recovery you can <span>trust.</span>","Backup policies and restore operations need a configured storage provider."],
+  "Nodes & Capacity":["Capacity without <span>guesswork.</span>","Live host metrics are available; isolated remote node agents and enforced quotas remain in development."],
+  "Backups & Recovery":["Recovery you can <span>trust.</span>","Review local snapshots, schedule backups and restore a verified backup with a safety copy."],
   "Store & Billing":["Your hosting <span>business center.</span>","Manage hosting plans, create invoices and record verified offline payments."],
-  "Customers & Resellers":["Every tenant, <span>properly separated.</span>","Customer accounts and role-based tenant access are not implemented yet."],
+  "Customers & Resellers":["Every tenant, <span>properly separated.</span>","Create customer accounts, assign servers, reset passwords and control account access."],
   "Automation & AI":["Less repetition. <span>More control.</span>","Create safe workflows here in a later phase; no background jobs run yet."],
   "Extensions":["Make Nexus <span>your own.</span>","Manage add-ons here when the extension system is available."],
-  "Security & Audit":["Security with <span>visibility.</span>","Review locally recorded changes and owner session controls."],
+  "Security & Audit":["Security with <span>visibility.</span>","Review recorded changes, customer access and owner session controls."],
   "Settings":["Tune your <span>workspace.</span>","Workspace and integration settings."]
 };
 let currentPage = "Overview";
@@ -135,8 +135,8 @@ function renderPageWorkspace(page) {
     const content = {
       "Nodes & Capacity":["Node inventory","CPU, RAM, disk and allocation telemetry","No node agents are connected. This section will show real capacity after a node agent is added."],
       "Backups & Recovery":["Backup jobs","Per-server local backup and restore controls","Open a server's File Manager to create backups, schedule automatic snapshots, or restore a checksum-verified backup."],
-      "Store & Billing":["Products and plans","Plans, invoices and payment status","Billing is not connected. No payments or invoices are being processed."],
-      "Customers & Resellers":["Customer accounts","Owners, customers, teams and resellers","Owner login is active. Multi-user accounts, customer tenancy and per-server permissions remain to be implemented."],
+      "Store & Billing":["Products and plans","Plans, invoices and payment status","Hosting plans and linked invoices are tracked locally. Online payment gateway verification and automatic provisioning are not enabled."],
+      "Customers & Resellers":["Customer accounts","Owners, customers, teams and resellers","Create customer accounts, assign servers, reset passwords, and suspend or reactivate access. Reseller hierarchy and email delivery are not implemented yet."],
       "Automation & AI":["Workflow center","Scheduled tasks and event-driven automation","No automation runs in the background in this version."],
       "Extensions":["Extensions library","Approved add-ons and integrations","The extension loader and marketplace are not active yet."],
       "Security & Audit":["Activity audit","Recent changes recorded by this local workspace","Owner login, expiring sessions, login throttling and CSRF-protected mutations are active. Customer roles and full production security hardening remain pending."],
