@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Nexus Panel development backend with owner authentication; node isolation is not production-ready."""
 from __future__ import annotations
-import json, os, re, sqlite3, threading, uuid, time
+import json, os, re, sqlite3, threading, uuid, time, zipfile
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,6 +13,13 @@ DATA_DIR = Path(os.environ.get("NEXUS_DATA_DIR", ROOT / "data")).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SERVERS_DIR = DATA_DIR / "servers"
 SERVERS_DIR.mkdir(parents=True, exist_ok=True)
+BACKUPS_DIR = DATA_DIR / "backups"
+BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    os.chmod(DATA_DIR, 0o700)
+    os.chmod(BACKUPS_DIR, 0o700)
+except OSError:
+    pass
 DB_PATH = DATA_DIR / "nexus.sqlite3"
 PORT = int(os.environ.get("NEXUS_PORT", "8000"))
 # Bind to loopback by default. Remote binding is only enabled explicitly by the launcher
@@ -48,6 +55,10 @@ def init_db():
             token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, csrf_token TEXT NOT NULL,
             expires_at TEXT NOT NULL, created_at TEXT NOT NULL,
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS backups (
+            id TEXT PRIMARY KEY, server_id TEXT NOT NULL, filename TEXT NOT NULL,
+            size INTEGER NOT NULL, sha256 TEXT NOT NULL, created_at TEXT NOT NULL
         );
         """)
         if not db.execute("SELECT COUNT(*) FROM activities").fetchone()[0]:
@@ -255,6 +266,10 @@ class Handler(SimpleHTTPRequestHandler):
                 with DB_LOCK, connect_db() as db: cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
                 return self.json_response(200, {"ok": True, "runtime": snapshot(sid), "launch_command": cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui"})
             if len(parts) == 4 and parts[3] == "console": return self.json_response(200, {"ok": True, **logs(sid)})
+            if len(parts) == 4 and parts[3] == "backups":
+                with DB_LOCK, connect_db() as db:
+                    rows = [dict(row) for row in db.execute("SELECT id,server_id,filename,size,sha256,created_at FROM backups WHERE server_id=? ORDER BY created_at DESC", (sid,))]
+                return self.json_response(200, {"ok": True, "items": rows})
             if len(parts) == 4 and parts[3] == "files":
                 try: return self.json_response(200, {"ok": True, **list_files(SERVERS_DIR / sid, parse_qs(urlparse(self.path).query).get("path", [""])[0])})
                 except (ValueError, OSError) as exc: return self.json_response(400, {"ok": False, "error": str(exc)})
@@ -411,6 +426,7 @@ class Handler(SimpleHTTPRequestHandler):
             if len(parts) != 4 or not server_exists(parts[2]): return self.json_response(404, {"ok": False, "error": "Server not found"})
             sid, action = parts[2], parts[3]
             from runtime_manager import start, stop, command, change_file, snapshot, install_paper, _validate
+                from backup_manager import create_backup, restore_backup
             try:
                 if action == "install":
                     with DB_LOCK, connect_db() as db:
@@ -422,6 +438,31 @@ class Handler(SimpleHTTPRequestHandler):
                     result = install_paper(SERVERS_DIR / sid, str(data.get("version", "latest")))
                     add_activity("Paper server software installed", sid + " · " + result["version"])
                     return self.json_response(200, {"ok": True, "install": result})
+                if action == "backup":
+                    backup_id = str(uuid.uuid4())
+                    result = create_backup(SERVERS_DIR / sid, BACKUPS_DIR / sid, backup_id)
+                    with DB_LOCK, connect_db() as db:
+                        db.execute("INSERT INTO backups(id,server_id,filename,size,sha256,created_at) VALUES(?,?,?,?,?,?)",
+                                   (backup_id, sid, result["filename"], result["size"], result["sha256"], now()))
+                    add_activity("Server backup created", sid + " · " + result["filename"])
+                    return self.json_response(201, {"ok": True, "backup": {**result, "created_at": now()}})
+                if action == "restore":
+                    if snapshot(sid).get("running"):
+                        raise RuntimeError("Stop the server before restoring a backup.")
+                    backup_id = str(data.get("backup_id", ""))
+                    with DB_LOCK, connect_db() as db:
+                        selected = db.execute("SELECT * FROM backups WHERE id=? AND server_id=?", (backup_id, sid)).fetchone()
+                    if not selected:
+                        return self.json_response(404, {"ok": False, "error": "Backup not found for this server."})
+                    # Preserve the current state before replacing any files.
+                    pre_id = str(uuid.uuid4())
+                    pre = create_backup(SERVERS_DIR / sid, BACKUPS_DIR / sid, pre_id)
+                    with DB_LOCK, connect_db() as db:
+                        db.execute("INSERT INTO backups(id,server_id,filename,size,sha256,created_at) VALUES(?,?,?,?,?,?)",
+                                   (pre_id, sid, pre["filename"], pre["size"], pre["sha256"], now()))
+                    restored = restore_backup(SERVERS_DIR / sid, selected["filename"], selected["sha256"], BACKUPS_DIR / sid)
+                    add_activity("Server backup restored", sid + " · " + selected["filename"])
+                    return self.json_response(200, {"ok": True, "restore": restored, "pre_restore_backup_id": pre_id})
                 if action == "start":
                     with DB_LOCK, connect_db() as db: cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
                     launch = str(data.get("launch_command") or (cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui"))
@@ -449,7 +490,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if action == "files":
                     result = change_file(SERVERS_DIR / sid, data.get("operation"), str(data.get("path", "")), data.get("content", ""))
                     return self.json_response(200, {"ok": True, **result})
-            except (ValueError, RuntimeError, OSError) as exc: return self.json_response(400, {"ok": False, "error": str(exc)})
+            except (ValueError, RuntimeError, OSError, zipfile.BadZipFile) as exc: return self.json_response(400, {"ok": False, "error": str(exc)})
             return self.json_response(404, {"ok": False, "error": "Server action not found"})
         if path == "/api/connectors":
             panel_type, base_url = str(data.get("panel_type", "")).strip(), str(data.get("base_url", "")).strip().rstrip("/")
