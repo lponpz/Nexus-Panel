@@ -323,11 +323,11 @@ def current_session(handler):
         return None
     with DB_LOCK, connect_db() as db:
         row = db.execute(
-            "SELECT sessions.user_id,sessions.csrf_token,sessions.expires_at,users.username,users.role "
-            "FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token_hash=?",
+            "SELECT sessions.user_id,sessions.csrf_token,sessions.expires_at,users.username,users.role,customers.status AS customer_status "
+            "FROM sessions JOIN users ON users.id=sessions.user_id LEFT JOIN customers ON customers.user_id=users.id WHERE sessions.token_hash=?",
             (_token_digest(token),)
         ).fetchone()
-        if not row or row["expires_at"] <= now():
+        if not row or row["expires_at"] <= now() or (row["role"] == "customer" and row["customer_status"] != "active"):
             if row:
                 db.execute("DELETE FROM sessions WHERE token_hash=?", (_token_digest(token),))
             return None
@@ -617,7 +617,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if attempts >= 5:
                     return self.auth_error(429, "Too many sign-in attempts. Wait 15 minutes and try again.")
             with DB_LOCK, connect_db() as db:
-                user = db.execute("SELECT id,password_hash FROM users WHERE username=?", (username,)).fetchone()
+                user = db.execute("SELECT id,password_hash,role FROM users WHERE username=?", (username,)).fetchone()
             if not user or not password_matches(password, user["password_hash"]):
                 with DB_LOCK:
                     attempts, window_start = LOGIN_FAILURES.get(remote_ip, (0, monotonic_now))
@@ -625,6 +625,11 @@ class Handler(SimpleHTTPRequestHandler):
                         attempts, window_start = 0, monotonic_now
                     LOGIN_FAILURES[remote_ip] = (attempts + 1, window_start)
                 return self.auth_error(401, "Incorrect username or password.")
+            if user["role"] == "customer":
+                with DB_LOCK, connect_db() as db:
+                    customer_state = db.execute("SELECT status FROM customers WHERE user_id=?", (user["id"],)).fetchone()
+                if not customer_state or customer_state["status"] != "active":
+                    return self.auth_error(403, "This customer account is suspended. Contact the hosting owner.")
             with DB_LOCK:
                 LOGIN_FAILURES.pop(remote_ip, None)
             headers = []
@@ -781,6 +786,18 @@ class Handler(SimpleHTTPRequestHandler):
         if path.startswith("/api/customers/"):
             if not owner_only(self): return
             parts = path.strip("/").split("/")
+            if len(parts) == 4 and parts[3] == "status":
+                customer_id = parts[2]
+                status_value = str(data.get("status", "")).strip().lower()
+                if status_value not in ("active", "suspended"):
+                    return self.json_response(400, {"ok": False, "error": "Status must be active or suspended."})
+                with DB_LOCK, connect_db() as db:
+                    customer = db.execute("SELECT username FROM users WHERE id=? AND role='customer'", (customer_id,)).fetchone()
+                    if not customer: return self.json_response(404, {"ok": False, "error": "Customer not found."})
+                    db.execute("UPDATE customers SET status=? WHERE user_id=?", (status_value, customer_id))
+                    if status_value == "suspended": db.execute("DELETE FROM sessions WHERE user_id=?", (customer_id,))
+                add_activity("Customer account status changed", customer["username"] + " · " + status_value)
+                return self.json_response(200, {"ok": True, "customer_id": customer_id, "status": status_value})
             if len(parts) == 4 and parts[3] == "password":
                 customer_id = parts[2]
                 new_password = data.get("new_password", "")
