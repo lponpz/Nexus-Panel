@@ -1,0 +1,28 @@
+name: Nexus checks
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python modules
+        run: python -m py_compile server.py runtime_manager.py tests/test_auth.py
+      - name: Run authentication integration tests
+        run: python -m unittest discover -s tests -v
+      - name: Check browser JavaScript syntax
+        run: |
+          node --check app.js
+          node --check runtime-ui.js
