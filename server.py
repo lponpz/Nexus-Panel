@@ -194,6 +194,34 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json_response(201, {"ok": True, "item": item})
         return self.json_response(404, {"ok": False, "error": "API route not found"})
 
+    def do_PUT(self):
+        path = urlparse(self.path).path.rstrip("/")
+        parts = path.split("/")
+        if len(parts) != 4 or parts[1] != "api" or parts[2] != "servers":
+            return self.json_response(404, {"ok": False, "error": "API route not found"})
+        server_id = parts[3]
+        try:
+            data = self.read_json()
+        except ValueError as exc:
+            return self.json_response(400, {"ok": False, "error": str(exc)})
+        allowed = {"name", "game", "panel", "status"}
+        if set(data) - allowed:
+            return self.json_response(400, {"ok": False, "error": "Unsupported server fields."})
+        with DB_LOCK, connect_db() as db:
+            row = db.execute("SELECT * FROM servers WHERE id = ?", (server_id,)).fetchone()
+            if row is None:
+                return self.json_response(404, {"ok": False, "error": "Server record not found"})
+            item = dict(row)
+            item.update({key: str(value).strip() for key, value in data.items()})
+            if not item["name"] or len(item["name"]) > 64 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]*", item["name"]):
+                return self.json_response(400, {"ok": False, "error": "Name must be 1–64 letters, numbers, spaces, dots, underscores or hyphens."})
+            if item["game"] not in VALID_GAMES or item["panel"] not in VALID_PANELS or item["status"] not in VALID_STATUSES:
+                return self.json_response(400, {"ok": False, "error": "Choose a supported game, panel and status."})
+            db.execute("UPDATE servers SET name=?, game=?, panel=?, status=? WHERE id=?",
+                       (item["name"], item["game"], item["panel"], item["status"], server_id))
+        add_activity("Server record updated", f'{item["name"]} · status: {item["status"]}')
+        return self.json_response(200, {"ok": True, "item": item})
+
     def do_DELETE(self):
         path = urlparse(self.path).path.rstrip("/")
         parts = path.split("/")
