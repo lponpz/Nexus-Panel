@@ -42,7 +42,7 @@ def connect_db():
 def init_db():
     with DB_LOCK, connect_db() as db:
         db.executescript("""
-        CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, name TEXT NOT NULL, game TEXT NOT NULL, panel TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Configured', created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, name TEXT NOT NULL, game TEXT NOT NULL, panel TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Configured', created_at TEXT NOT NULL, owner_user_id TEXT);
         CREATE TABLE IF NOT EXISTS server_ports (
             server_id TEXT PRIMARY KEY, port INTEGER NOT NULL UNIQUE,
             created_at TEXT NOT NULL, FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE
@@ -54,6 +54,10 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'owner', created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS customers (
+            user_id TEXT PRIMARY KEY, email TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+            created_at TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
         CREATE TABLE IF NOT EXISTS sessions (
             token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, csrf_token TEXT NOT NULL,
@@ -86,6 +90,13 @@ def init_db():
             FOREIGN KEY(plan_id) REFERENCES billing_plans(id) ON DELETE SET NULL
         );
         """)
+        # Forward-compatible migration for databases created before tenant ownership.
+        server_columns = {row["name"] for row in db.execute("PRAGMA table_info(servers)")}
+        if "owner_user_id" not in server_columns:
+            db.execute("ALTER TABLE servers ADD COLUMN owner_user_id TEXT")
+        owner = db.execute("SELECT id FROM users WHERE role='owner' ORDER BY created_at LIMIT 1").fetchone()
+        if owner:
+            db.execute("UPDATE servers SET owner_user_id=? WHERE owner_user_id IS NULL", (owner["id"],))
         if not db.execute("SELECT COUNT(*) FROM activities").fetchone()[0]:
             db.execute("INSERT INTO activities(message,detail,created_at) VALUES(?,?,?)", ("Nexus initialized", "Local database created", now()))
 
@@ -247,6 +258,29 @@ def server_connection_info(item):
         result["public_address_configured"] = False
         result["connection_type"] = None
     return result
+
+def current_user(handler):
+    return current_session(handler)
+
+def is_owner(handler):
+    session = current_session(handler)
+    return bool(session and session.get("role") == "owner")
+
+def can_access_server(handler, server_id):
+    session = current_session(handler)
+    if not session:
+        return False
+    if session.get("role") == "owner":
+        return server_exists(server_id)
+    with DB_LOCK, connect_db() as db:
+        row = db.execute("SELECT owner_user_id FROM servers WHERE id=?", (server_id,)).fetchone()
+    return bool(row and row["owner_user_id"] == session.get("user_id"))
+
+def owner_only(handler):
+    if is_owner(handler):
+        return True
+    handler.json_response(403, {"ok": False, "error": "Owner permission required for this action."})
+    return False
 
 def server_exists(server_id):
     with DB_LOCK, connect_db() as db:
@@ -449,14 +483,26 @@ class Handler(SimpleHTTPRequestHandler):
                 activities = [dict(r) for r in db.execute("SELECT * FROM activities ORDER BY id DESC LIMIT 8")]
             return self.json_response(200, {"ok": True, "servers": servers, "connectors": connectors, "activities": activities})
         if path == "/api/servers":
-            with DB_LOCK, connect_db() as db: rows = [dict(r) for r in db.execute("SELECT * FROM servers ORDER BY created_at DESC")]
+            session = current_session(self)
+            with DB_LOCK, connect_db() as db:
+                if session["role"] == "owner":
+                    rows = [dict(r) for r in db.execute("SELECT * FROM servers ORDER BY created_at DESC")]
+                else:
+                    rows = [dict(r) for r in db.execute("SELECT * FROM servers WHERE owner_user_id=? ORDER BY created_at DESC", (session["user_id"],))]
             return self.json_response(200, {"ok": True, "items": [server_connection_info(row) for row in rows]})
+        if path == "/api/customers":
+            if not owner_only(self): return
+            with DB_LOCK, connect_db() as db:
+                rows = [dict(row) for row in db.execute("SELECT u.id,u.username,u.created_at,c.email,c.status,COUNT(s.id) AS server_count FROM users u JOIN customers c ON c.user_id=u.id LEFT JOIN servers s ON s.owner_user_id=u.id WHERE u.role='customer' GROUP BY u.id ORDER BY u.created_at DESC")]
+            return self.json_response(200, {"ok": True, "items": rows})
         if path == "/api/connectors":
+            if not owner_only(self): return
             with DB_LOCK, connect_db() as db: rows = [dict(r) for r in db.execute("SELECT * FROM connectors ORDER BY created_at DESC")]
             return self.json_response(200, {"ok": True, "items": rows})
+
         if path.startswith("/api/servers/"):
             parts = path.strip("/").split("/")
-            if len(parts) < 3 or not server_exists(parts[2]): return self.json_response(404, {"ok": False, "error": "Server not found"})
+            if len(parts) < 3 or not can_access_server(self, parts[2]): return self.json_response(404, {"ok": False, "error": "Server not found"})
             sid = parts[2]
             from runtime_manager import snapshot, logs, list_files, server_path, process_metrics
             if len(parts) == 3:
@@ -703,7 +749,30 @@ class Handler(SimpleHTTPRequestHandler):
                 row = db.execute("SELECT * FROM billing_invoices WHERE id=?", (invoice_id,)).fetchone()
             add_activity("Manual payment recorded", row["invoice_number"] + " · reference " + reference)
             return self.json_response(200, {"ok": True, "item": dict(row), "manual_record_only": True})
+        if path == "/api/customers":
+            if not owner_only(self): return
+            username = str(data.get("username", "")).strip()
+            password = data.get("password", "")
+            email = str(data.get("email", "")).strip().lower()
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username):
+                return self.json_response(400, {"ok": False, "error": "Username must be 3–32 characters: letters, numbers, dot, underscore or hyphen."})
+            if not isinstance(password, str) or len(password) < 12 or len(password) > 1024:
+                return self.json_response(400, {"ok": False, "error": "Initial password must be at least 12 characters."})
+            if email and (len(email) > 254 or not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", email)):
+                return self.json_response(400, {"ok": False, "error": "Enter a valid customer email or leave it blank."})
+            customer_id = str(uuid.uuid4())
+            try:
+                with DB_LOCK, connect_db() as db:
+                    db.execute("INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,?,?)",
+                               (customer_id, username, password_hash(password), "customer", now()))
+                    db.execute("INSERT INTO customers(user_id,email,status,created_at) VALUES(?,?,?,?)",
+                               (customer_id, email, "active", now()))
+            except sqlite3.IntegrityError:
+                return self.json_response(409, {"ok": False, "error": "That username already exists."})
+            add_activity("Customer account created", username)
+            return self.json_response(201, {"ok": True, "customer": {"id": customer_id, "username": username, "email": email, "status": "active", "server_count": 0}})
         if path == "/api/servers":
+            if not owner_only(self): return
             name, game, panel = str(data.get("name", "")).strip(), str(data.get("game", "")).strip(), str(data.get("panel", "Nexus (local)")).strip()
             status = str(data.get("status", "Configured")).strip()
             if not name or len(name) > 64 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]*", name): return self.json_response(400, {"ok": False, "error": "Server name is invalid."})
@@ -712,7 +781,11 @@ class Handler(SimpleHTTPRequestHandler):
             port = None
             try:
                 with DB_LOCK, connect_db() as db:
-                    db.execute("INSERT INTO servers(id,name,game,panel,status,created_at) VALUES(?,?,?,?,?,?)", (item["id"], name, game, panel, status, item["created_at"]))
+                    customer_id = str(data.get("customer_id", "")).strip() or current_session(self)["user_id"]
+                    if customer_id != current_session(self)["user_id"]:
+                        exists = db.execute("SELECT id FROM users WHERE id=? AND role='customer'", (customer_id,)).fetchone()
+                        if not exists: raise ValueError("Select a valid customer account for this server.")
+                    db.execute("INSERT INTO servers(id,name,game,panel,status,created_at,owner_user_id) VALUES(?,?,?,?,?,?,?)", (item["id"], name, game, panel, status, item["created_at"], customer_id))
                     db.execute("INSERT OR IGNORE INTO server_runtime(server_id,launch_command,updated_at) VALUES(?,?,?)", (item["id"], "java -Xms1G -Xmx2G -jar server.jar nogui", now()))
                     if game == "Minecraft" and panel == "Nexus (local)":
                         port = allocate_minecraft_port(db)
@@ -732,7 +805,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json_response(201, {"ok": True, "item": item})
         if path.startswith("/api/servers/"):
             parts = path.strip("/").split("/")
-            if len(parts) != 4 or not server_exists(parts[2]): return self.json_response(404, {"ok": False, "error": "Server not found"})
+            if len(parts) != 4 or not can_access_server(self, parts[2]): return self.json_response(404, {"ok": False, "error": "Server not found"})
             sid, action = parts[2], parts[3]
             from runtime_manager import start, stop, command, change_file, snapshot, install_paper, _validate
             from backup_manager import create_backup, restore_backup
@@ -880,6 +953,9 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json_response(200, {"ok": True, "disabled_id": plan_id})
         if len(parts) != 4 or parts[1] != "api" or parts[2] not in ("servers", "connectors"): return self.json_response(404, {"ok": False, "error": "API route not found"})
         kind, item_id = parts[2], parts[3]; table = "servers" if kind == "servers" else "connectors"
+        if kind == "connectors" and not owner_only(self): return
+        if kind == "servers" and not can_access_server(self, item_id): return self.json_response(404, {"ok": False, "error": "Server not found"})
+        if kind == "servers" and not owner_only(self): return
         with DB_LOCK, connect_db() as db:
             row = db.execute("SELECT * FROM " + table + " WHERE id=?", (item_id,)).fetchone()
             if row is None: return self.json_response(404, {"ok": False, "error": "Record not found"})
