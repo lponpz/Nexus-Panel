@@ -300,6 +300,22 @@ def _modrinth_json(url):
     return payload
 
 
+def detect_server_software(directory):
+    root = Path(directory).resolve()
+    metadata = root / "nexus-server.json"
+    if metadata.is_file() and not metadata.is_symlink():
+        try:
+            info = json.loads(metadata.read_text("utf-8"))
+            software = info.get("software")
+            if software in ("paper", "fabric"):
+                return software
+        except (OSError, ValueError, AttributeError):
+            pass
+    if (root / "fabric-server.jar").is_file() or (root / "fabric-server-launch.jar").is_file():
+        return "fabric"
+    return None
+
+
 def detect_minecraft_version(directory):
     root = Path(directory).resolve()
     metadata = root / "nexus-server.json"
@@ -433,7 +449,7 @@ def install_modrinth_mod(directory, query, game_version=None):
     if not query or len(query) > 120 or any(ord(ch) < 32 for ch in query):
         raise ValueError("Enter a mod name or search phrase up to 120 characters.")
     if not isinstance(game_version, str) or not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", game_version):
-        raise ValueError("Nexus could not detect the Minecraft version. Install Paper and start the server once before installing mods.")
+        raise ValueError("Nexus could not detect the Minecraft version. Install Fabric and start the server once before installing mods.")
     from urllib.parse import urlencode
     search_url = "https://api.modrinth.com/v2/search?" + urlencode({
         "query": query,
