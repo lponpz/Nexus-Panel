@@ -1,8 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "Nexus Control Center needs Python 3. Install Python 3, then run: bash ./nexus"
+  echo "Nexus Panel needs Python 3. Install Python 3, then run: bash ./nexus"
   exit 1
 fi
+
+PORT="${NEXUS_PORT:-8000}"
+if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
+  echo "Invalid NEXUS_PORT: choose a port between 1024 and 65535."
+  exit 1
+fi
+
+# Start the static dashboard server once; bind to all interfaces for Codespaces port forwarding.
+if ! python3 -c 'import socket,sys; s=socket.socket(); s.settimeout(.3); sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)' "$PORT"; then
+  nohup python3 -m http.server "$PORT" --bind 0.0.0.0 --directory "$ROOT" > /tmp/nexus-dashboard.log 2>&1 &
+  echo $! > /tmp/nexus-dashboard.pid
+  sleep 1
+fi
+
+echo
+echo "NEXUS PANEL DASHBOARD"
+if [ -n "${CODESPACE_NAME:-}" ]; then
+  echo "Open dashboard: https://${CODESPACE_NAME}-${PORT}.app.github.dev"
+else
+  echo "Open dashboard: http://localhost:${PORT}"
+fi
+echo "Dashboard server log: /tmp/nexus-dashboard.log"
+echo "Opening the terminal Control Center now. The web dashboard runs in the background."
+echo "Note: this is the current frontend prototype; backend and real panel operations are not connected yet."
+echo
+
 exec python3 tools/nexusctl.py
