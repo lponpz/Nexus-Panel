@@ -442,7 +442,7 @@ class Handler(SimpleHTTPRequestHandler):
         return data
     def do_GET(self):
         path = urlparse(self.path).path
-        if path in ("/", "/index.html", "/studio.html"):
+        if path in ("/", "/index.html", "/studio.html", "/customer.html"):
             if not configured() or not has_owner():
                 self.send_response(302); self.send_header("Location", "/installer.html"); self.end_headers(); return
             if not current_session(self):
@@ -454,6 +454,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json_response(200, {"ok": True, "authenticated": True, "username": session["username"], "role": session["role"], "csrf_token": session["csrf_token"]})
         if path.startswith("/api/") and not self.api_authenticated():
             return
+        if path.startswith("/api/") and path not in ("/api/health", "/api/setup", "/api/auth/session", "/api/servers") and not path.startswith("/api/servers/"):
+            if not owner_only(self): return
         if path == "/api/health":
             return self.json_response(200, {"ok": True, "app": "Nexus Panel", "mode": "local-dev", "database": "sqlite", "timestamp": now()})
         if path == "/api/setup":
@@ -558,6 +560,9 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
     def do_POST(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/") and path != "/api/auth/logout" and not path.startswith("/api/servers/"):
+            if not self.api_authenticated(): return
+            if not owner_only(self): return
         if path == "/api/auth/logout":
             if not self.api_authenticated():
                 return
@@ -941,6 +946,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_DELETE(self):
         if not self.api_authenticated():
             return
+        if not owner_only(self): return
         parts = urlparse(self.path).path.rstrip("/").split("/")
         if len(parts) == 4 and parts[1:3] == ["api", "billing-plans"]:
             plan_id = parts[3]
