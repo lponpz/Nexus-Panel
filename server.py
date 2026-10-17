@@ -778,6 +778,22 @@ class Handler(SimpleHTTPRequestHandler):
                 row = db.execute("SELECT * FROM billing_invoices WHERE id=?", (invoice_id,)).fetchone()
             add_activity("Manual payment recorded", row["invoice_number"] + " · reference " + reference)
             return self.json_response(200, {"ok": True, "item": dict(row), "manual_record_only": True})
+        if path.startswith("/api/customers/"):
+            if not owner_only(self): return
+            parts = path.strip("/").split("/")
+            if len(parts) == 4 and parts[3] == "password":
+                customer_id = parts[2]
+                new_password = data.get("new_password", "")
+                if not isinstance(new_password, str) or len(new_password) < 12 or len(new_password) > 1024:
+                    return self.json_response(400, {"ok": False, "error": "New customer password must be at least 12 characters."})
+                with DB_LOCK, connect_db() as db:
+                    customer = db.execute("SELECT username FROM users WHERE id=? AND role='customer'", (customer_id,)).fetchone()
+                    if not customer: return self.json_response(404, {"ok": False, "error": "Customer not found."})
+                    db.execute("UPDATE users SET password_hash=? WHERE id=?", (password_hash(new_password), customer_id))
+                    db.execute("DELETE FROM sessions WHERE user_id=?", (customer_id,))
+                add_activity("Customer password reset", customer["username"])
+                return self.json_response(200, {"ok": True, "message": "Password reset. The customer must sign in again."})
+            return self.json_response(404, {"ok": False, "error": "Customer action not found."})
         if path == "/api/customers":
             if not owner_only(self): return
             username = str(data.get("username", "")).strip()
