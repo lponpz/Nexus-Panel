@@ -1,52 +1,75 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 PORT="${NEXUS_PORT:-8000}"
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "Nexus Panel requires Python 3. Install Python 3, then run: bash ./nexus"
+  echo "Python 3 is required. Install Python 3, then run: bash ./nexus"
   exit 1
 fi
 if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
-  echo "Invalid NEXUS_PORT: choose a port between 1024 and 65535."
+  echo "Invalid NEXUS_PORT. Choose a port between 1024 and 65535."
   exit 1
 fi
-# Reuse the running Nexus API if it is already healthy.
-if python3 -c 'import urllib.request,sys; u="http://127.0.0.1:"+sys.argv[1]+"/api/health"; exec("try:\n r=urllib.request.urlopen(u,timeout=1); sys.exit(0 if r.status==200 else 1)\nexcept Exception:\n sys.exit(1)")' "$PORT"; then
-  echo "Nexus Panel backend is already running on port $PORT."
+is_nexus_running() {
+  NEXUS_PORT="$1" python3 -c 'import os,urllib.request,sys
+try:
+ r=urllib.request.urlopen("http://127.0.0.1:"+os.environ["NEXUS_PORT"]+"/api/health",timeout=1)
+ sys.exit(0 if r.status==200 else 1)
+except Exception: sys.exit(1)'
+}
+port_is_open() {
+  python3 -c 'import socket,sys
+s=socket.socket()
+try: s.bind(("127.0.0.1",int(sys.argv[1])))
+except OSError: sys.exit(0)
+else: s.close(); sys.exit(1)' "$1"
+}
+# Reuse the app if it is already serving its health endpoint.
+if is_nexus_running "$PORT"; then
+  echo "Nexus Panel is already running on port $PORT."
 else
-  # Stop only the old prototype static server created by the previous launcher.
-  if [ -f /tmp/nexus-dashboard.pid ]; then
-    OLD_PID="$(cat /tmp/nexus-dashboard.pid 2>/dev/null || true)"
-    if [ -n "$OLD_PID" ] && ps -p "$OLD_PID" -o args= 2>/dev/null | grep -Fq "http.server $PORT"; then
-      kill "$OLD_PID" 2>/dev/null || true
-      sleep 1
-    fi
+  # If an older static preview or unrelated process occupies the port, use the next available one.
+  for attempt in $(seq 1 10); do
+    if port_is_open "$PORT"; then break; fi
+    PORT=$((PORT + 1))
+    if [ "$PORT" -gt 65535 ]; then echo "No available port found."; exit 1; fi
+  done
+  if ! port_is_open "$PORT"; then
+    echo "No available port found near the requested port. Set NEXUS_PORT to another free port."
+    exit 1
   fi
-  echo "Starting Nexus Panel backend and SQLite database..."
-  nohup python3 server.py > /tmp/nexus-dashboard.log 2>&1 &
-  echo $! > /tmp/nexus-dashboard.pid
-  for attempt in $(seq 1 20); do
-    if python3 -c 'import urllib.request,sys; u="http://127.0.0.1:"+sys.argv[1]+"/api/health"; exec("try:\n r=urllib.request.urlopen(u,timeout=1); sys.exit(0 if r.status==200 else 1)\nexcept Exception:\n sys.exit(1)")' "$PORT"; then break; fi
+  export NEXUS_PORT="$PORT"
+  echo "Starting Nexus Panel backend on port $PORT..."
+  nohup python3 "$ROOT/server.py" > /tmp/nexus-dashboard.log 2>&1 &
+  PID=$!
+  echo "$PID" > /tmp/nexus-dashboard.pid
+  READY=0
+  for attempt in $(seq 1 30); do
+    if is_nexus_running "$PORT"; then READY=1; break; fi
+    if ! kill -0 "$PID" 2>/dev/null; then break; fi
     sleep 0.5
   done
-  if ! python3 -c 'import urllib.request,sys; u="http://127.0.0.1:"+sys.argv[1]+"/api/health"; exec("try:\n r=urllib.request.urlopen(u,timeout=1); sys.exit(0 if r.status==200 else 1)\nexcept Exception:\n sys.exit(1)")' "$PORT"; then
-    echo "Nexus backend did not start. Check /tmp/nexus-dashboard.log"
+  if [ "$READY" -ne 1 ]; then
+    echo "Nexus did not start. Last backend log:"
     cat /tmp/nexus-dashboard.log
     exit 1
   fi
 fi
 echo
-echo "NEXUS PANEL MVP IS RUNNING"
+echo "=========================================="
+echo "       NEXUS PANEL IS RUNNING"
+echo "=========================================="
 if [ -n "${CODESPACE_NAME:-}" ]; then
-  echo "Dashboard: https://${CODESPACE_NAME}-${PORT}.app.github.dev"
-  echo "If the browser does not open, go to the Codespaces Ports tab and open port $PORT."
+  echo "Installer GUI: https://${CODESPACE_NAME}-${PORT}.app.github.dev/installer.html"
+  echo "Dashboard:     https://${CODESPACE_NAME}-${PORT}.app.github.dev/index.html"
+  echo "If it does not open automatically: Codespaces > Ports > port $PORT > Open in Browser."
 else
-  echo "Dashboard: http://localhost:$PORT"
+  echo "Installer GUI: http://localhost:$PORT/installer.html"
+  echo "Dashboard:     http://localhost:$PORT/index.html"
 fi
-echo "Health API: /api/health"
-echo "SQLite database: $ROOT/data/nexus.sqlite3"
-echo "Log: /tmp/nexus-dashboard.log"
+echo "Health check:  http://127.0.0.1:$PORT/api/health"
+echo "Database:      $ROOT/data/nexus.sqlite3"
+echo "Log:           /tmp/nexus-dashboard.log"
 echo
-echo "This is a working local MVP. Keep the Codespaces port PRIVATE."
-echo "External panel control, login/authentication, game process controls, billing and backups are not implemented yet."
+echo "Keep the Codespaces port PRIVATE. This MVP has no login yet."
