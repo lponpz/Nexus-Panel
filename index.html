@@ -6,6 +6,13 @@
   <meta name="theme-color" content="#07111f">
   <meta name="description" content="Nexus Panel — unified game hosting control center">
   <title>Nexus Panel — Control Center</title>
+  <script>
+    if (location.pathname === "/" || location.pathname.endsWith("/index.html")) {
+      fetch("/api/setup").then(response => response.ok ? response.json() : null)
+        .then(state => { if (state && !state.configured) location.replace("/installer.html"); })
+        .catch(() => {});
+    }
+  </script>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
