@@ -23,3 +23,13 @@ A typed frontend, secure backend API, tenant-aware authorization, connector regi
 
 ## Security principles
 Least privilege, tenant isolation, encrypted secrets, secret redaction, SSRF protection, server-side authorization, audit trails, idempotent operations, and approval gates for high-impact actions.
+
+## Terminal Control Center (early scaffold)
+
+Run the keyboard-driven terminal menu on Linux/macOS with Python 3:
+
+```bash
+python3 tools/nexusctl.py
+```
+
+Menu options include Install, Update, Reinstall, Delete, Add User, Add Owner, Backups & Recovery, Panel Connectors, and Logs & Health. **At this stage these actions are planning-only:** the TUI does not make system changes or connect to panel APIs. See [Terminal Control Center safety and implementation plan](docs/TERMINAL_CONTROL_CENTER.md).
