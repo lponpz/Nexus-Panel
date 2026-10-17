@@ -1,47 +1,51 @@
 # Nexus Panel
 
-**Universal game-hosting control center — Phase 1 prototype**
+**Universal game-hosting control center — working local MVP**
 
-Nexus Panel is being designed as a premium, Blue Neon, responsive dashboard that can unify supported game hosting panels through a capability-aware adapter architecture.
+Nexus Panel is a Blue Neon responsive web dashboard with a Python standard-library backend and a persistent SQLite database. The app is intended to be run in a private GitHub Codespaces environment while the production architecture is developed.
 
-## Start here
-- Open `index.html` in a modern browser to preview the responsive dashboard.
-- See [Universal Panel Adapter Architecture](docs/UNIVERSAL_ADAPTER_ARCHITECTURE.md).
-- See the [Master Roadmap](docs/ROADMAP.md) for all agreed future feature groups.
+## Run in GitHub Codespaces
 
-## Phase 1 prototype includes
-- Responsive dashboard layout and mobile navigation.
-- Demo overview cards, connector list, activity feed, server table and quick actions.
-- UI-only connector setup dialog and local demo search.
-- Architecture and security design notes.
-
-## Important
-This is a frontend prototype. Dashboard figures are sample data. It does not yet authenticate users, contact panel APIs, control servers, store credentials, process billing, or perform backups. Do not enter real API tokens into the demo UI.
-
-## Planned production direction
-A typed frontend, secure backend API, tenant-aware authorization, connector registry, encrypted credential vault, job queue, audit trail and adapter contract tests. The actual production stack will be finalized before backend implementation.
-
-## Security principles
-Least privilege, tenant isolation, encrypted secrets, secret redaction, SSRF protection, server-side authorization, audit trails, idempotent operations, and approval gates for high-impact actions.
-
-## Terminal Control Center (early scaffold)
-
-Run the keyboard-driven terminal menu on Linux/macOS with Python 3:
+From the repository root:
 
 ```bash
-python3 tools/nexusctl.py
+git pull
+bash ./nexus
 ```
 
-Menu options include Install, Update, Reinstall, Delete, Add User, Add Owner, Backups & Recovery, Panel Connectors, and Logs & Health. **At this stage these actions are planning-only:** the TUI does not make system changes or connect to panel APIs. See [Terminal Control Center safety and implementation plan](docs/TERMINAL_CONTROL_CENTER.md).
-## One-command terminal menu
+The launcher starts the backend on port 8000, waits for its health endpoint, and prints the forwarded Codespaces URL. If it does not open automatically, use the **Ports** tab and open port 8000. The Codespaces port should remain **Private**.
 
-Clone the repository and immediately open the terminal Control Center:
+If you have not cloned the repository yet:
 
 ```bash
-git clone https://github.com/lponpz/Nexus-Panel.git && cd Nexus-Panel && bash ./nexus
+git clone https://github.com/lponpz/Nexus-Panel.git
+cd Nexus-Panel
+bash ./nexus
 ```
 
-Use number keys **1–9** to open menu actions and **0** to exit. This currently launches the prototype TUI; production installation and destructive operations are not yet implemented. See [one-command launch notes](docs/ONE_COMMAND_LAUNCH.md).
-## Codespaces dashboard port
+## Working now
 
-The `bash ./nexus` launcher starts the static dashboard on port 8000 and then opens the terminal Control Center. Codespaces is configured to forward port 8000 and open the dashboard in a browser. If it does not open automatically, use the **Ports** tab and click the forwarded URL. Details: [Codespaces dashboard instructions](docs/CODESPACES_DASHBOARD.md).
+- Python HTTP server serves the dashboard and JSON API.
+- SQLite persists server records, connector endpoint records, and recent activity in `data/nexus.sqlite3`.
+- Dashboard overview reads actual counts from the database instead of sample counts.
+- Create and delete server records.
+- Save and remove connector endpoint records.
+- API health endpoint: `/api/health`.
+- Dashboard data endpoint: `/api/overview`.
+- Record APIs: `/api/servers` and `/api/connectors`.
+- The dashboard clearly marks saved endpoints as **not tested**.
+
+## Important current limits
+
+This is a **working local MVP, not a production-ready public hosting panel**. It does not yet include login/authentication, multi-user authorization, encrypted credential storage, live Pterodactyl/Pelican/AMP adapters, game-process start/stop, real node telemetry, backups/restore, billing, or production deployment hardening. Do not enter API tokens or expose the Codespaces port publicly. The server and connector entries are local records only; creating one does not install a game server or control an external panel.
+
+## Architecture and planning
+
+- [Master roadmap](docs/ROADMAP.md)
+- [Universal panel adapter architecture](docs/UNIVERSAL_ADAPTER_ARCHITECTURE.md)
+- [Terminal Control Center plan](docs/TERMINAL_CONTROL_CENTER.md)
+- [Codespaces dashboard instructions](docs/CODESPACES_DASHBOARD.md)
+
+## Security direction
+
+Before any public deployment, implement authentication and session protection, server-side authorization, CSRF protections, encrypted secrets, rate limits, SSRF protection for connector tests, audit trails, tenant isolation, and secure deployment configuration. External integrations must discover and respect each adapter's actual capabilities rather than claiming unsupported actions succeeded.
