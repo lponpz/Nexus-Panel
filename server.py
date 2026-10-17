@@ -2,7 +2,7 @@
 """Nexus Panel development backend with owner authentication; node isolation is not production-ready."""
 from __future__ import annotations
 import json, os, re, sqlite3, threading, uuid, time, zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -59,6 +59,11 @@ def init_db():
         CREATE TABLE IF NOT EXISTS backups (
             id TEXT PRIMARY KEY, server_id TEXT NOT NULL, filename TEXT NOT NULL,
             size INTEGER NOT NULL, sha256 TEXT NOT NULL, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS backup_schedules (
+            server_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 0,
+            interval_hours INTEGER NOT NULL DEFAULT 24, next_run_at TEXT,
+            last_run_at TEXT, updated_at TEXT NOT NULL
         );
         """)
         if not db.execute("SELECT COUNT(*) FROM activities").fetchone()[0]:
@@ -270,6 +275,11 @@ class Handler(SimpleHTTPRequestHandler):
                 with DB_LOCK, connect_db() as db:
                     rows = [dict(row) for row in db.execute("SELECT id,server_id,filename,size,sha256,created_at FROM backups WHERE server_id=? ORDER BY created_at DESC", (sid,))]
                 return self.json_response(200, {"ok": True, "items": rows})
+            if len(parts) == 4 and parts[3] == "backup-schedule":
+                with DB_LOCK, connect_db() as db:
+                    row = db.execute("SELECT server_id,enabled,interval_hours,next_run_at,last_run_at,updated_at FROM backup_schedules WHERE server_id=?", (sid,)).fetchone()
+                schedule = dict(row) if row else {"server_id": sid, "enabled": 0, "interval_hours": 24, "next_run_at": None, "last_run_at": None}
+                return self.json_response(200, {"ok": True, "schedule": schedule})
             if len(parts) == 4 and parts[3] == "files":
                 try: return self.json_response(200, {"ok": True, **list_files(SERVERS_DIR / sid, parse_qs(urlparse(self.path).query).get("path", [""])[0])})
                 except (ValueError, OSError) as exc: return self.json_response(400, {"ok": False, "error": str(exc)})
@@ -438,6 +448,20 @@ class Handler(SimpleHTTPRequestHandler):
                     result = install_paper(SERVERS_DIR / sid, str(data.get("version", "latest")))
                     add_activity("Paper server software installed", sid + " · " + result["version"])
                     return self.json_response(200, {"ok": True, "install": result})
+                if action == "backup-schedule":
+                    enabled_value = data.get("enabled", False)
+                    interval_value = data.get("interval_hours", 24)
+                    if not isinstance(enabled_value, bool):
+                        raise ValueError("Schedule enabled must be true or false.")
+                    if isinstance(interval_value, bool) or not isinstance(interval_value, int) or interval_value < 1 or interval_value > 168:
+                        raise ValueError("Backup interval must be between 1 and 168 hours.")
+                    next_run = (datetime.now(timezone.utc) + timedelta(hours=interval_value)).isoformat(timespec="seconds") if enabled_value else None
+                    with DB_LOCK, connect_db() as db:
+                        db.execute("INSERT OR REPLACE INTO backup_schedules(server_id,enabled,interval_hours,next_run_at,last_run_at,updated_at) VALUES(?,?,?,?,COALESCE((SELECT last_run_at FROM backup_schedules WHERE server_id=?),NULL),?)",
+                                   (sid, 1 if enabled_value else 0, interval_value, next_run, sid, now()))
+                        row = db.execute("SELECT server_id,enabled,interval_hours,next_run_at,last_run_at,updated_at FROM backup_schedules WHERE server_id=?", (sid,)).fetchone()
+                    add_activity("Backup schedule updated", sid + " · " + ("enabled" if enabled_value else "disabled"))
+                    return self.json_response(200, {"ok": True, "schedule": dict(row)})
                 if action == "backup":
                     backup_id = str(uuid.uuid4())
                     result = create_backup(SERVERS_DIR / sid, BACKUPS_DIR / sid, backup_id)
