@@ -33,7 +33,7 @@ Open the installer/dashboard URL printed by the launcher. If it does not open au
 - First-run installer creates the workspace and first owner account; passwords are stored as salted PBKDF2-HMAC-SHA256 hashes.
 - Owner login with a 12-hour HttpOnly/SameSite session cookie, failed-login throttling, and CSRF tokens on API mutations.
 - API routes are blocked until setup; the dashboard redirects unauthenticated visitors to the login page.
-- Minecraft server record creation with persistent unique port allocation, copyable Java Edition join address, public-host configuration, and `server.properties` port synchronization; server record editing and deletion.
+- Minecraft server record creation with persistent unique port allocation, copyable Java Edition join address, public-host configuration, and `server.properties` port synchronization; server record editing and deletion. The Game Servers table also queries the local Java Edition status protocol and shows live online/offline state, Minecraft version, MOTD tooltip and player count.
 - Per-server workspace folders.
 - Java-only process launch/stop/restart for a server JAR named `server.jar`.
 - One-click stable Paper server installer using PaperMC's current Fill API; it chooses a Java-compatible stable version, validates the artifact host and published SHA-256, checks size, and atomically installs `server.jar` without overwriting an existing JAR.
