@@ -70,3 +70,17 @@
 .billing-status.paid{color:#55d6a0}
 .billing-status.pending{color:#f0c36b}
 @media(max-width:600px){.billing-row{align-items:stretch;flex-direction:column}.billing-price{justify-items:start;text-align:left}.billing-form{padding:12px}}
+
+
+/* Minecraft connection address panels */
+.address-copy{border:0;background:transparent;color:#8dd9ff;font:inherit;font-weight:650;cursor:pointer;text-align:left;padding:0}
+.address-hint{display:block;margin-top:5px;color:var(--muted,#9fb0c7);font-size:11px}
+.network-address-panel{display:grid;grid-template-columns:1fr;gap:12px;margin:18px 0;padding:18px;border:1px solid var(--border,#243449);border-radius:16px;background:rgba(8,20,37,.55)}
+.network-address-panel h3{margin:0 0 5px}.network-address-panel p{margin:0;color:var(--muted,#9fb0c7);font-size:13px}
+.public-host-form{display:flex;gap:10px;flex-wrap:wrap}
+.public-host-form input{flex:1;min-width:200px;padding:11px 12px;border:1px solid var(--border,#243449);border-radius:10px;background:#091627;color:inherit;font:inherit}
+#publicHostStatus{color:var(--muted,#9fb0c7);font-size:12px}
+.server-address-card{display:grid;gap:7px;margin:14px 0;padding:12px;border:1px solid #27567a;border-radius:12px;background:rgba(6,27,45,.75)}
+.server-address-card small{color:var(--muted,#9fb0c7);font-size:11px}
+.server-address-card strong{font-size:16px;color:#7ce8b2;overflow-wrap:anywhere}
+.server-address-card button{justify-self:start}
