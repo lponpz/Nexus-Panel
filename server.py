@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Nexus Panel development backend with owner authentication; node isolation is not production-ready."""
 from __future__ import annotations
-import json, os, re, sqlite3, threading, uuid, time, zipfile
+import json, os, re, sqlite3, threading, uuid, time, zipfile, signal
 from datetime import datetime, timezone, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -580,6 +580,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.auth_error(409, "Cannot delete a running server safely: " + str(exc))
             with DB_LOCK, connect_db() as db:
                 db.execute("DELETE FROM backups WHERE server_id=?", (item_id,))
+                db.execute("DELETE FROM backup_schedules WHERE server_id=?", (item_id,))
                 db.execute("DELETE FROM server_runtime WHERE server_id=?", (item_id,))
                 db.execute("DELETE FROM servers WHERE id=?", (item_id,))
             server_dir = (SERVERS_DIR / item_id).resolve()
@@ -668,11 +669,27 @@ def _backup_scheduler_loop():
 if __name__ == "__main__":
     init_db()
     threading.Thread(target=_backup_scheduler_loop, daemon=True, name="nexus-backup-scheduler").start()
-    print("Nexus Panel local development backend")
+    httpd = ThreadingHTTPServer((HOST, PORT), Handler)
+    print("Nexus Panel development backend")
     print("Database:", DB_PATH)
     print("Listening on " + HOST + ":" + str(PORT))
     if HOST not in ("127.0.0.1", "::1", "localhost"):
-        print("WARNING: remote binding enabled; this MVP has no login/authorization. Keep the forwarded port PRIVATE.")
+        print("WARNING: remote binding enabled; owner login exists but node isolation and production hardening are incomplete. Keep the forwarded port PRIVATE.")
     else:
-        print("Local-only binding enabled. No login/authorization is implemented in this development build.")
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+        print("Local-only binding enabled. Node isolation and production hardening are still required before public deployment.")
+
+    def _handle_shutdown(signum, frame):
+        print("[nexus] Shutdown requested; stopping managed game processes safely...")
+        threading.Thread(target=httpd.shutdown, daemon=True, name="nexus-http-shutdown").start()
+
+    signal.signal(signal.SIGTERM, _handle_shutdown)
+    signal.signal(signal.SIGINT, _handle_shutdown)
+    try:
+        httpd.serve_forever()
+    finally:
+        try:
+            from runtime_manager import shutdown_all
+            stopped = shutdown_all()
+            print("[nexus] Stopped " + str(len(stopped)) + " managed game process(es).")
+        finally:
+            httpd.server_close()
