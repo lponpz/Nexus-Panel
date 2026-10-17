@@ -67,7 +67,9 @@ async function refreshDashboard() {
     const results = await Promise.all([api("/api/health"),api("/api/overview"),api("/api/servers"),api("/api/connectors")]);
     const overview = results[1], servers = results[2], connectors = results[3];
     $("#connectorCount").innerHTML = overview.connectors + ' <small>saved</small>';
+    $("#navConnectorCount").textContent = overview.connectors;
     $("#serverCount").innerHTML = overview.servers + ' <small>saved</small>';
+    $("#navServerCount").textContent = overview.servers;
     $("#serverCountLabel").textContent = overview.servers + " records";
     $("#serverProgress").style.width = overview.servers ? "100%" : "0%";
     renderServers(servers.items); renderConnectors(connectors.items); renderActivities(overview.activities);
