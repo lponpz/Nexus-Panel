@@ -468,7 +468,20 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.json_response(200, {"ok": True, "schedule": dict(row)})
                 if action == "backup":
                     backup_id = str(uuid.uuid4())
-                    result = create_backup(SERVERS_DIR / sid, BACKUPS_DIR / sid, backup_id)
+                    paused = False
+                    try:
+                        if snapshot(sid).get("running"):
+                            command(sid, "save-off")
+                            paused = True
+                            command(sid, "save-all flush")
+                            time.sleep(2)
+                        result = create_backup(SERVERS_DIR / sid, BACKUPS_DIR / sid, backup_id)
+                    finally:
+                        if paused:
+                            try:
+                                command(sid, "save-on")
+                            except Exception:
+                                add_activity("Backup save-on recovery failed", sid + " · check server console")
                     with DB_LOCK, connect_db() as db:
                         db.execute("INSERT INTO backups(id,server_id,filename,size,sha256,created_at) VALUES(?,?,?,?,?,?)",
                                    (backup_id, sid, result["filename"], result["size"], result["sha256"], now()))
