@@ -54,7 +54,7 @@ def install_paper(directory, version="latest"):
     jar = root / "server.jar"
     if jar.exists():
         raise ValueError("server.jar already exists. Move or delete it before installing Paper.")
-    if version != "latest" and not re.fullmatch(r"\\d+\\.\\d+(?:\\.\\d+)?", str(version)):
+    if version != "latest" and not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", str(version)):
         raise ValueError("Choose 'latest' or a Minecraft version such as 1.21.11.")
     if version == "latest":
         catalog = _paper_json("https://fill.papermc.io/v3/projects/paper/versions")
@@ -64,7 +64,7 @@ def install_paper(directory, version="latest"):
             if isinstance(entry, dict):
                 item = entry.get("version", {})
                 candidate = item.get("id") if isinstance(item, dict) else None
-                if isinstance(candidate, str) and re.fullmatch(r"\\d+\\.\\d+(?:\\.\\d+)?", candidate):
+                if isinstance(candidate, str) and re.fullmatch(r"\d+\.\d+(?:\.\d+)?", candidate):
                     ids.append(candidate)
         if not ids:
             raise RuntimeError("Paper did not return any supported Minecraft versions.")
@@ -80,7 +80,7 @@ def install_paper(directory, version="latest"):
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.hostname != "fill-data.papermc.io":
         raise ValueError("Paper returned an untrusted download URL.")
-    if not isinstance(name, str) or not name.endswith(".jar") or "/" in name or "\\\\" in name:
+    if not isinstance(name, str) or not name.endswith(".jar") or "/" in name or "\\" in name:
         raise ValueError("Paper returned an invalid artifact name.")
     if not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", checksum):
         raise ValueError("Paper did not provide a valid SHA-256 checksum.")
