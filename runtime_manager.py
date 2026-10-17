@@ -190,6 +190,98 @@ def install_paper(directory, version="latest"):
                 pass
 
 
+def _fabric_json(url):
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname != "meta.fabricmc.net":
+        raise ValueError("Refusing to contact an untrusted Fabric metadata URL.")
+    request = urllib.request.Request(url, headers={
+        "User-Agent": "NexusPanel/0.1 (https://github.com/lponpz/Nexus-Panel)",
+        "Accept": "application/json"
+    })
+    with urllib.request.urlopen(request, timeout=20) as response:
+        if urlparse(response.geturl()).hostname != "meta.fabricmc.net":
+            raise ValueError("Fabric metadata redirected to an untrusted host.")
+        raw = response.read(4_000_000)
+    payload = json.loads(raw.decode("utf-8"))
+    if not isinstance(payload, (dict, list)):
+        raise ValueError("Fabric returned invalid metadata.")
+    return payload
+
+
+def _minecraft_minimum_java(version):
+    parts = [int(x) for x in version.split(".")]
+    if parts[0] >= 26:
+        return 25
+    if parts[0] >= 2:
+        return 21
+    if len(parts) > 1 and (parts[1] > 20 or (parts[1] == 20 and len(parts) > 2 and parts[2] >= 5)):
+        return 21
+    if len(parts) > 1 and parts[1] >= 18:
+        return 17
+    return 8
+
+
+def install_fabric_server(directory, game_version="latest"):
+    """Install the official Fabric executable server launcher for the newest Java-compatible stable game version."""
+    root = Path(directory).resolve()
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Server directory is invalid.")
+    if (root / "server.jar").exists() or (root / "fabric-server.jar").exists():
+        raise ValueError("A server JAR already exists. Remove or back up existing server software before installing Fabric.")
+    java_major = _java_major()
+    games = _fabric_json("https://meta.fabricmc.net/v2/versions/game")
+    if not isinstance(games, list):
+        raise RuntimeError("Fabric returned an invalid game version catalog.")
+    if game_version == "latest":
+        candidates = [item for item in games if isinstance(item, dict) and item.get("stable") is True
+                      and isinstance(item.get("version"), str)
+                      and re.fullmatch(r"\d+(?:\.\d+){1,2}", item["version"])
+                      and _minecraft_minimum_java(item["version"]) <= java_major]
+        if not candidates:
+            raise RuntimeError("No stable Fabric server version is compatible with Java " + str(java_major) + ".")
+        game_version = candidates[0]["version"]
+    else:
+        if not isinstance(game_version, str) or not re.fullmatch(r"\d+(?:\.\d+){1,2}", game_version):
+            raise ValueError("Choose latest or a Minecraft version such as 1.21.11.")
+        game = next((item for item in games if isinstance(item, dict) and item.get("version") == game_version and item.get("stable") is True), None)
+        if not game:
+            raise ValueError("Fabric does not list that stable Minecraft version.")
+        if _minecraft_minimum_java(game_version) > java_major:
+            raise RuntimeError("Minecraft " + game_version + " requires Java " + str(_minecraft_minimum_java(game_version)) + " or newer.")
+    loaders = _fabric_json("https://meta.fabricmc.net/v2/versions/loader/" + game_version)
+    if not isinstance(loaders, list):
+        raise RuntimeError("Fabric returned an invalid loader catalog.")
+    loader = next((item.get("loader", {}).get("version") for item in loaders
+                   if isinstance(item, dict) and isinstance(item.get("loader"), dict) and item["loader"].get("stable") is True), None)
+    installers = _fabric_json("https://meta.fabricmc.net/v2/versions/installer")
+    if not isinstance(installers, list):
+        raise RuntimeError("Fabric returned an invalid installer catalog.")
+    installer = next((item.get("version") for item in installers if isinstance(item, dict) and item.get("stable") is True and isinstance(item.get("version"), str)), None)
+    if not loader or not installer:
+        raise RuntimeError("Fabric did not list a stable loader and installer version.")
+    url = "https://meta.fabricmc.net/v2/versions/loader/" + game_version + "/" + loader + "/" + installer + "/server/jar"
+    request = urllib.request.Request(url, headers={"User-Agent":"NexusPanel/0.1 (https://github.com/lponpz/Nexus-Panel)"})
+    with urllib.request.urlopen(request, timeout=45) as response:
+        if urlparse(response.geturl()).hostname != "meta.fabricmc.net":
+            raise ValueError("Fabric launcher download redirected to an untrusted host.")
+        payload = response.read(100 * 1024 * 1024 + 1)
+    if len(payload) < 100_000 or len(payload) > 100 * 1024 * 1024:
+        raise ValueError("Fabric launcher download is empty or exceeds the 100 MB limit.")
+    target = root / "fabric-server.jar"
+    fd, temp_name = tempfile.mkstemp(prefix=".nexus-fabric-", suffix=".tmp", dir=str(root))
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload); stream.flush(); os.fsync(stream.fileno())
+        os.replace(temp_name, target)
+    except Exception:
+        try: os.unlink(temp_name)
+        except OSError: pass
+        raise
+    return {"software":"fabric","version":game_version,"loader_version":loader,"installer_version":installer,
+            "java_major":java_major,"filename":target.name,"size":len(payload),"sha256":hashlib.sha256(payload).hexdigest(),
+            "launch_command":"java -Xms1G -Xmx2G -jar fabric-server.jar nogui"}
+
+
 def _modrinth_json(url):
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.hostname != "api.modrinth.com":
