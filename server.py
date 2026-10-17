@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Nexus Panel local development backend. Keep private; production auth is not yet implemented."""
 from __future__ import annotations
-import json, os, re, sqlite3, threading, uuid
+import json, os, re, sqlite3, threading, uuid, time
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -19,6 +19,7 @@ PORT = int(os.environ.get("NEXUS_PORT", "8000"))
 # for Codespaces, where the user must keep the forwarded port private.
 HOST = os.environ.get("NEXUS_HOST", "127.0.0.1")
 DB_LOCK = threading.RLock()
+LOGIN_FAILURES = {}
 VALID_GAMES = {"Minecraft", "FiveM", "Terraria", "Other"}
 VALID_STATUSES = {"Configured", "Stopped", "Maintenance"}
 VALID_PANELS = {"Nexus (local)", "Pterodactyl", "Pelican Panel", "AMP by CubeCoders", "Custom adapter (SDK)"}
@@ -287,10 +288,25 @@ class Handler(SimpleHTTPRequestHandler):
             password = data.get("password", "")
             if not isinstance(password, str) or len(username) > 80 or len(password) > 1024:
                 return self.auth_error(400, "Invalid username or password.")
+            remote_ip = self.client_address[0]
+            monotonic_now = time.monotonic()
+            with DB_LOCK:
+                attempts, window_start = LOGIN_FAILURES.get(remote_ip, (0, monotonic_now))
+                if monotonic_now - window_start >= 900:
+                    attempts, window_start = 0, monotonic_now
+                if attempts >= 5:
+                    return self.auth_error(429, "Too many sign-in attempts. Wait 15 minutes and try again.")
             with DB_LOCK, connect_db() as db:
                 user = db.execute("SELECT id,password_hash FROM users WHERE username=?", (username,)).fetchone()
             if not user or not password_matches(password, user["password_hash"]):
+                with DB_LOCK:
+                    attempts, window_start = LOGIN_FAILURES.get(remote_ip, (0, monotonic_now))
+                    if monotonic_now - window_start >= 900:
+                        attempts, window_start = 0, monotonic_now
+                    LOGIN_FAILURES[remote_ip] = (attempts + 1, window_start)
                 return self.auth_error(401, "Incorrect username or password.")
+            with DB_LOCK:
+                LOGIN_FAILURES.pop(remote_ip, None)
             headers = []
             # Issue the cookie on the same response that reports a successful login.
             import secrets
