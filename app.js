@@ -7,7 +7,7 @@ const pages = {
   "Panel Connectors":["Connect your <span>hosting world.</span>","Review saved endpoints. Live authentication and external panel control still require adapters."],
   "Nodes & Capacity":["Capacity without <span>guesswork.</span>","Node telemetry appears here once a real node agent is implemented."],
   "Backups & Recovery":["Recovery you can <span>trust.</span>","Backup policies and restore operations need a configured storage provider."],
-  "Store & Billing":["Your hosting <span>business center.</span>","Plans, invoices and payments will appear here when billing is implemented."],
+  "Store & Billing":["Your hosting <span>business center.</span>","Manage hosting plans, create invoices and record verified offline payments."],
   "Customers & Resellers":["Every tenant, <span>properly separated.</span>","Customer accounts and role-based tenant access are not implemented yet."],
   "Automation & AI":["Less repetition. <span>More control.</span>","Create safe workflows here in a later phase; no background jobs run yet."],
   "Extensions":["Make Nexus <span>your own.</span>","Manage add-ons here when the extension system is available."],
