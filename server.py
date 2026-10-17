@@ -75,6 +75,8 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
     def read_json(self, limit=16384):
+        if urlparse(self.path).path.endswith("/files"):
+            limit = 1100000
         try: length = int(self.headers.get("Content-Length", "0"))
         except ValueError: raise ValueError("Invalid content length")
         if length < 2 or length > limit: raise ValueError("Request body must be valid JSON and under the size limit")
