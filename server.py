@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Nexus Panel development backend with owner authentication; node isolation is not production-ready."""
 from __future__ import annotations
-import json, os, re, sqlite3, threading, uuid, time, zipfile, signal
+import json, os, re, sqlite3, threading, uuid, time, zipfile, signal, socket, ipaddress
 from datetime import datetime, timezone, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -43,6 +43,10 @@ def init_db():
     with DB_LOCK, connect_db() as db:
         db.executescript("""
         CREATE TABLE IF NOT EXISTS servers (id TEXT PRIMARY KEY, name TEXT NOT NULL, game TEXT NOT NULL, panel TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Configured', created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS server_ports (
+            server_id TEXT PRIMARY KEY, port INTEGER NOT NULL UNIQUE,
+            created_at TEXT NOT NULL, FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE
+        );
         CREATE TABLE IF NOT EXISTS server_runtime (server_id TEXT PRIMARY KEY, launch_command TEXT NOT NULL DEFAULT 'java -Xms1G -Xmx2G -jar server.jar nogui', updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS connectors (id TEXT PRIMARY KEY, panel_type TEXT NOT NULL, base_url TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Saved - not tested', created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS activities (id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -88,6 +92,90 @@ def init_db():
 def add_activity(message, detail):
     with DB_LOCK, connect_db() as db:
         db.execute("INSERT INTO activities(message,detail,created_at) VALUES(?,?,?)", (str(message)[:180], str(detail)[:240], now()))
+
+def public_host():
+    configured = os.environ.get("NEXUS_PUBLIC_HOST", "").strip()
+    if not configured:
+        with DB_LOCK, connect_db() as db:
+            row = db.execute("SELECT value FROM settings WHERE key='public_host'").fetchone()
+        configured = row["value"].strip() if row else ""
+    return configured
+
+def valid_public_host(value):
+    value = str(value or "").strip()
+    if not value or len(value) > 253 or any(ch in value for ch in ("/", "?", "#", "@", " ")):
+        return False
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return bool(re.fullmatch(r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*", value))
+
+def connection_address(port):
+    host = public_host()
+    if not host:
+        return "127.0.0.1:" + str(port), False
+    try:
+        if ipaddress.ip_address(host).version == 6:
+            host = "[" + host + "]"
+    except ValueError:
+        pass
+    return host + ":" + str(port), True
+
+def allocate_minecraft_port(db):
+    start = int(os.environ.get("NEXUS_MINECRAFT_PORT_START", "25565"))
+    end = int(os.environ.get("NEXUS_MINECRAFT_PORT_END", str(start + 99)))
+    if start < 1024 or end < start or end > 65535 or end - start > 2000:
+        raise ValueError("Minecraft port range is invalid. Configure NEXUS_MINECRAFT_PORT_START/END between 1024 and 65535.")
+    allocated = {row["port"] for row in db.execute("SELECT port FROM server_ports")}
+    for port in range(start, end + 1):
+        if port in allocated:
+            continue
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+            probe.bind(("0.0.0.0", port))
+            return port
+        except OSError:
+            continue
+        finally:
+            probe.close()
+    raise RuntimeError("No free Minecraft ports remain in the configured allocation range.")
+
+def configure_minecraft_properties(server_id, port):
+    root = SERVERS_DIR / server_id
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "server.properties"
+    existing = path.read_text("utf-8", errors="replace").splitlines() if path.exists() and not path.is_symlink() else []
+    output = []
+    seen_port = seen_ip = False
+    for line in existing:
+        if line.startswith("server-port="):
+            output.append("server-port=" + str(port)); seen_port = True
+        elif line.startswith("server-ip="):
+            output.append("server-ip="); seen_ip = True
+        else:
+            output.append(line)
+    if not seen_port: output.append("server-port=" + str(port))
+    if not seen_ip: output.append("server-ip=")
+    temp = path.with_suffix(".properties.tmp")
+    temp.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
+    os.replace(temp, path)
+
+def server_connection_info(item):
+    result = dict(item)
+    with DB_LOCK, connect_db() as db:
+        row = db.execute("SELECT port FROM server_ports WHERE server_id=?", (item["id"],)).fetchone()
+    if item.get("game") == "Minecraft" and row:
+        result["connect_port"] = row["port"]
+        result["connect_address"], result["public_address_configured"] = connection_address(row["port"])
+        result["connection_type"] = "Java Edition"
+    else:
+        result["connect_port"] = None
+        result["connect_address"] = None
+        result["public_address_configured"] = False
+        result["connection_type"] = None
+    return result
 
 def server_exists(server_id):
     with DB_LOCK, connect_db() as db:
@@ -274,6 +362,12 @@ class Handler(SimpleHTTPRequestHandler):
             with DB_LOCK, connect_db() as db:
                 rows = [dict(row) for row in db.execute("SELECT * FROM billing_invoices ORDER BY created_at DESC LIMIT 500")]
             return self.json_response(200, {"ok": True, "items": rows})
+        if path == "/api/network/public-host":
+            host = public_host()
+            return self.json_response(200, {"ok": True, "public_host": host, "configured": bool(host),
+                                            "environment_override": bool(os.environ.get("NEXUS_PUBLIC_HOST", "").strip()),
+                                            "port_start": int(os.environ.get("NEXUS_MINECRAFT_PORT_START", "25565")),
+                                            "port_end": int(os.environ.get("NEXUS_MINECRAFT_PORT_END", str(int(os.environ.get("NEXUS_MINECRAFT_PORT_START", "25565")) + 99)))})
         if path == "/api/host-metrics":
             from runtime_manager import host_metrics
             return self.json_response(200, {"ok": True, **host_metrics(DATA_DIR)})
@@ -285,7 +379,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json_response(200, {"ok": True, "servers": servers, "connectors": connectors, "activities": activities})
         if path == "/api/servers":
             with DB_LOCK, connect_db() as db: rows = [dict(r) for r in db.execute("SELECT * FROM servers ORDER BY created_at DESC")]
-            return self.json_response(200, {"ok": True, "items": rows})
+            return self.json_response(200, {"ok": True, "items": [server_connection_info(row) for row in rows]})
         if path == "/api/connectors":
             with DB_LOCK, connect_db() as db: rows = [dict(r) for r in db.execute("SELECT * FROM connectors ORDER BY created_at DESC")]
             return self.json_response(200, {"ok": True, "items": rows})
@@ -295,8 +389,10 @@ class Handler(SimpleHTTPRequestHandler):
             sid = parts[2]
             from runtime_manager import snapshot, logs, list_files, server_path, process_metrics
             if len(parts) == 3:
-                with DB_LOCK, connect_db() as db: cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
-                return self.json_response(200, {"ok": True, "runtime": snapshot(sid), "launch_command": cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui"})
+                with DB_LOCK, connect_db() as db:
+                    cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
+                    item = db.execute("SELECT * FROM servers WHERE id=?", (sid,)).fetchone()
+                return self.json_response(200, {"ok": True, "runtime": snapshot(sid), "launch_command": cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui", "server": server_connection_info(dict(item))})
             if len(parts) == 4 and parts[3] == "metrics": return self.json_response(200, {"ok": True, **process_metrics(sid)})
             if len(parts) == 4 and parts[3] == "console": return self.json_response(200, {"ok": True, **logs(sid)})
             if len(parts) == 4 and parts[3] == "backups":
@@ -447,6 +543,16 @@ class Handler(SimpleHTTPRequestHandler):
             headers = [("Set-Cookie", "nexus_session=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200" + secure)]
             add_activity("Nexus owner account created", username)
             return self.json_response(200, {"ok": True, "configured": True, "workspace_name": name, "authenticated": True, "csrf_token": csrf}, headers)
+        if path == "/api/network/public-host":
+            if os.environ.get("NEXUS_PUBLIC_HOST", "").strip():
+                return self.json_response(409, {"ok": False, "error": "NEXUS_PUBLIC_HOST is set by the environment. Change it there and restart Nexus."})
+            host = str(data.get("public_host", "")).strip().lower()
+            if host and not valid_public_host(host):
+                return self.json_response(400, {"ok": False, "error": "Enter a public IPv4 address or DNS hostname (not a URL)."})
+            with DB_LOCK, connect_db() as db:
+                db.execute("INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES('public_host',?,?)", (host, now()))
+            add_activity("Public game address updated", host or "Cleared; local-only display")
+            return self.json_response(200, {"ok": True, "public_host": host, "configured": bool(host)})
         if path == "/api/billing/plans":
             name = str(data.get("name", "")).strip()
             description = str(data.get("description", "")).strip()[:500]
@@ -525,11 +631,26 @@ class Handler(SimpleHTTPRequestHandler):
             if not name or len(name) > 64 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]*", name): return self.json_response(400, {"ok": False, "error": "Server name is invalid."})
             if game not in VALID_GAMES or panel not in VALID_PANELS or status not in VALID_STATUSES: return self.json_response(400, {"ok": False, "error": "Choose a supported game, panel and status."})
             item = {"id": str(uuid.uuid4()), "name": name, "game": game, "panel": panel, "status": status, "created_at": now()}
-            with DB_LOCK, connect_db() as db:
-                db.execute("INSERT INTO servers(id,name,game,panel,status,created_at) VALUES(?,?,?,?,?,?)", (item["id"], name, game, panel, status, item["created_at"]))
-                db.execute("INSERT OR IGNORE INTO server_runtime(server_id,launch_command,updated_at) VALUES(?,?,?)", (item["id"], "java -Xms1G -Xmx2G -jar server.jar nogui", now()))
-            (SERVERS_DIR / item["id"]).mkdir(parents=True, exist_ok=True)
-            add_activity("Server record created", name + " · " + game + " · " + panel)
+            port = None
+            try:
+                with DB_LOCK, connect_db() as db:
+                    db.execute("INSERT INTO servers(id,name,game,panel,status,created_at) VALUES(?,?,?,?,?,?)", (item["id"], name, game, panel, status, item["created_at"]))
+                    db.execute("INSERT OR IGNORE INTO server_runtime(server_id,launch_command,updated_at) VALUES(?,?,?)", (item["id"], "java -Xms1G -Xmx2G -jar server.jar nogui", now()))
+                    if game == "Minecraft" and panel == "Nexus (local)":
+                        port = allocate_minecraft_port(db)
+                        db.execute("INSERT INTO server_ports(server_id,port,created_at) VALUES(?,?,?)", (item["id"], port, now()))
+                        item["connect_port"] = port
+                (SERVERS_DIR / item["id"]).mkdir(parents=True, exist_ok=True)
+                if port is not None:
+                    configure_minecraft_properties(item["id"], port)
+            except (OSError, RuntimeError, ValueError, sqlite3.IntegrityError) as exc:
+                with DB_LOCK, connect_db() as db:
+                    db.execute("DELETE FROM server_ports WHERE server_id=?", (item["id"],))
+                    db.execute("DELETE FROM server_runtime WHERE server_id=?", (item["id"],))
+                    db.execute("DELETE FROM servers WHERE id=?", (item["id"],))
+                return self.json_response(400, {"ok": False, "error": str(exc)})
+            item = server_connection_info(item)
+            add_activity("Game server record created", name + " · " + game + " · " + (item.get("connect_address") or panel))
             return self.json_response(201, {"ok": True, "item": item})
         if path.startswith("/api/servers/"):
             parts = path.strip("/").split("/")
@@ -601,7 +722,12 @@ class Handler(SimpleHTTPRequestHandler):
                     add_activity("Server backup restored", sid + " · " + selected["filename"])
                     return self.json_response(200, {"ok": True, "restore": restored, "pre_restore_backup_id": pre_id})
                 if action == "start":
-                    with DB_LOCK, connect_db() as db: cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
+                    with DB_LOCK, connect_db() as db:
+                        cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
+                        game_row = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
+                        port_row = db.execute("SELECT port FROM server_ports WHERE server_id=?", (sid,)).fetchone()
+                    if game_row and game_row["game"] == "Minecraft" and port_row:
+                        configure_minecraft_properties(sid, port_row["port"])
                     launch = str(data.get("launch_command") or (cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui"))
                     state = start(sid, SERVERS_DIR / sid, launch)
                     with DB_LOCK, connect_db() as db: db.execute("INSERT OR REPLACE INTO server_runtime(server_id,launch_command,updated_at) VALUES(?,?,?)", (sid, launch, now()))
@@ -611,7 +737,12 @@ class Handler(SimpleHTTPRequestHandler):
                     state = stop(sid); add_activity("Game process stopped", sid)
                     return self.json_response(200, {"ok": True, "runtime": state})
                 if action == "restart":
-                    with DB_LOCK, connect_db() as db: cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
+                    with DB_LOCK, connect_db() as db:
+                        cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
+                        game_row = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
+                        port_row = db.execute("SELECT port FROM server_ports WHERE server_id=?", (sid,)).fetchone()
+                    if game_row and game_row["game"] == "Minecraft" and port_row:
+                        configure_minecraft_properties(sid, port_row["port"])
                     launch = str(data.get("launch_command") or (cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui"))
                     if snapshot(sid).get("running"):
                         stop(sid)
