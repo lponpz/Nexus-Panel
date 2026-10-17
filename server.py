@@ -165,7 +165,9 @@ class Handler(SimpleHTTPRequestHandler):
         print("[nexus] " + (fmt % args))
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "same-origin")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
     def json_response(self, code, payload, extra_headers=None):
@@ -215,8 +217,8 @@ class Handler(SimpleHTTPRequestHandler):
         return data
     def do_GET(self):
         path = urlparse(self.path).path
-        if path in ("/", "/index.html", "/studio.html") and configured():
-            if not has_owner():
+        if path in ("/", "/index.html", "/studio.html"):
+            if not configured() or not has_owner():
                 self.send_response(302); self.send_header("Location", "/installer.html"); self.end_headers(); return
             if not current_session(self):
                 self.send_response(302); self.send_header("Location", "/login.html"); self.end_headers(); return
@@ -507,10 +509,14 @@ class Handler(SimpleHTTPRequestHandler):
         return self.json_response(200, {"ok": True, "deleted_id": item_id})
     def translate_path(self, path):
         rel = url2pathname(urlparse(path).path).lstrip("/")
-        parts = Path(rel).parts
-        if parts and (parts[0] == "data" or any(p.startswith(".") for p in parts)): return str(ROOT / "__not_found__")
+        # Only serve the explicit browser UI allowlist. Never expose Python source,
+        # tests, docs, local data, Git metadata, or arbitrary repository files.
+        public_files = {"index.html", "login.html", "installer.html", "studio.html", "styles.css", "app.js", "runtime-ui.js"}
+        if rel not in public_files:
+            return str(ROOT / "__not_found__")
         target = (ROOT / rel).resolve()
-        if target != ROOT and ROOT not in target.parents: return str(ROOT / "__not_found__")
+        if target != ROOT and ROOT not in target.parents:
+            return str(ROOT / "__not_found__")
         return str(target)
 
 if __name__ == "__main__":
