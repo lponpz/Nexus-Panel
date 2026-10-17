@@ -38,7 +38,7 @@ A planned feature is not complete until implemented, tested, and documented. The
 - [ ] Expiry Grace Dashboard.
 - [ ] Free Server Queue.
 - [ ] Server Templates.
-- [ ] Live Performance Dashboard.
+- [x] Live Performance Dashboard (local host/process metrics; container quotas remain pending).
 - [ ] Role Permission Builder.
 - [x] One-Click Restore (checksum-verified backup, pre-restore safety snapshot).
 
