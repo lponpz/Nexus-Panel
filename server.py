@@ -9,9 +9,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import sqlite3
+import subprocess
 import threading
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,12 +24,18 @@ from urllib.request import url2pathname
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("NEXUS_DATA_DIR", ROOT / "data")).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+SERVERS_DIR = DATA_DIR / "servers"
+SERVERS_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "nexus.sqlite3"
 PORT = int(os.environ.get("NEXUS_PORT", "8000"))
 DB_LOCK = threading.RLock()
 VALID_GAMES = {"Minecraft", "FiveM", "Terraria", "Other"}
 VALID_STATUSES = {"Configured", "Stopped", "Maintenance"}
 VALID_PANELS = {"Nexus (local)", "Pterodactyl", "Pelican Panel", "AMP by CubeCoders", "Custom adapter (SDK)"}
+RUNTIME_LOCK = threading.RLock()
+RUNTIMES = {}
+LOG_LIMIT = 500
+ALLOWED_EXECUTABLES = {"java", "java.exe"}
 
 
 def now() -> str:
