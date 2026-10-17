@@ -94,6 +94,10 @@ class NetworkAddressTests(unittest.TestCase):
         self.assertEqual(status,200,new_login)
         status,_,other=request("/api/servers/"+created["item"]["id"],cookie=headers2.get("Set-Cookie"))
         self.assertEqual(status,404,other)
+        status,_,suspended=request("/api/customers/"+second["customer"]["id"]+"/status","POST",{"status":"suspended"},self.cookie,self.csrf)
+        self.assertEqual(status,200,suspended)
+        status,_,suspended_login=request("/api/auth/login","POST",{"username":"customer-two","password":"customer-two-reset-password"})
+        self.assertEqual(status,403,suspended_login)
 
     def test_other_games_do_not_claim_minecraft_port(self):
         status,_,created=request("/api/servers","POST",{"name":"FiveM record","game":"FiveM","panel":"Nexus (local)","status":"Configured"},self.cookie,self.csrf)
