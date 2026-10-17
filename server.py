@@ -820,6 +820,16 @@ class Handler(SimpleHTTPRequestHandler):
             from runtime_manager import start, stop, command, change_file, snapshot, install_paper, _validate
             from backup_manager import create_backup, restore_backup
             try:
+                if action == "assign":
+                    if not owner_only(self): return
+                    customer_id = str(data.get("customer_id", "")).strip()
+                    with DB_LOCK, connect_db() as db:
+                        customer = db.execute("SELECT id FROM users WHERE id=? AND role='customer'", (customer_id,)).fetchone()
+                        if not customer: raise ValueError("Select a valid customer account.")
+                        db.execute("UPDATE servers SET owner_user_id=? WHERE id=?", (customer_id, sid))
+                        server_name = db.execute("SELECT name FROM servers WHERE id=?", (sid,)).fetchone()["name"]
+                    add_activity("Server assigned to customer", server_name + " · " + customer_id)
+                    return self.json_response(200, {"ok": True, "server_id": sid, "customer_id": customer_id})
                 if action == "install":
                     with DB_LOCK, connect_db() as db:
                         game_row = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
