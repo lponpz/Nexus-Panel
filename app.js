@@ -50,7 +50,7 @@ function renderServers(items) {
 }
 async function refreshMinecraftStatuses(items) {
   await Promise.all(items.filter(item => item.game === "Minecraft" && item.connect_port).map(async item => {
-    const badges = $('[data-game-ping="' + CSS.escape(item.id) + '"]');
+    const badges = $$('[data-game-ping="' + CSS.escape(item.id) + '"]');
     try {
       const response = await fetch("/api/servers/" + encodeURIComponent(item.id) + "/game-status", {credentials:"same-origin"});
       const data = await response.json();
@@ -252,6 +252,7 @@ async function refreshDashboard() {
     $("#serverCountLabel").textContent = overview.servers + " records";
     $("#serverProgress").style.width = overview.servers ? "100%" : "0%";
     renderServers(servers.items); renderConnectors(connectors.items); renderActivities(overview.activities);
+    refreshMinecraftStatuses(servers.items);
     refreshMinecraftStatuses(servers.items);
     if (currentPage !== "Overview") renderPageWorkspace(currentPage);
     const footer = $(".footer span:last-child");
