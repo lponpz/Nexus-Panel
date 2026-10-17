@@ -27,9 +27,9 @@ Open the installer/dashboard URL printed by the launcher. If it does not open au
 - API routes are blocked until setup; the dashboard redirects unauthenticated visitors to the login page.
 - Server record creation, editing and deletion.
 - Per-server workspace folders.
-- Java-only process launch/stop for a server JAR named `server.jar`.
+- Java-only process launch/stop/restart for a server JAR named `server.jar`.
 - Browser console with output polling and game-console command input.
-- Per-server file browser, text file create/edit/delete, folder create, and uploads up to 50 MB.
+- Per-server file browser, text file create/edit/delete, folder create, uploads up to 50 MB, and downloads up to 200 MB.
 - SQLite activity log, overview counts, and connector endpoint records.
 
 ## Current runtime limitations
