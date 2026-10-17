@@ -56,6 +56,10 @@ def init_db():
           panel TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Configured',
           created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS server_runtime (
+          server_id TEXT PRIMARY KEY, launch_command TEXT NOT NULL DEFAULT 'java -Xms1G -Xmx2G -jar server.jar nogui',
+          updated_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS connectors (
           id TEXT PRIMARY KEY, panel_type TEXT NOT NULL, base_url TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'Saved - not tested', created_at TEXT NOT NULL
@@ -86,6 +90,11 @@ def valid_url(value: str) -> bool:
         return parsed.scheme in ("http", "https") and bool(parsed.hostname) and not parsed.username and not parsed.password
     except ValueError:
         return False
+
+
+def server_exists(server_id):
+    with DB_LOCK, connect_db() as db:
+        return db.execute("SELECT 1 FROM servers WHERE id=?", (server_id,)).fetchone() is not None
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -144,11 +153,74 @@ class Handler(SimpleHTTPRequestHandler):
                     rows = {r["key"]: r["value"] for r in db.execute("SELECT key,value FROM settings")}
                 return self.json_response(200, {"ok": True, "configured": rows.get("setup_complete") == "true",
                     "workspace_name": rows.get("workspace_name", "Nexus Workspace")})
+            if path.startswith("/api/servers/"):
+                parts = path.strip("/").split("/")
+                if len(parts) == 3:
+                    server_id = parts[2]
+                    with DB_LOCK, connect_db() as db:
+                        row = db.execute("SELECT * FROM servers WHERE id=?", (server_id,)).fetchone()
+                        cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (server_id,)).fetchone()
+                    if row is None:
+                        return self.json_response(404, {"ok": False, "error": "Server not found"})
+                    from runtime_manager import snapshot
+                    return self.json_response(200, {"ok": True, "item": dict(row), "runtime": snapshot(server_id),
+                        "launch_command": cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui"})
+                if len(parts) == 4 and parts[3] == "console":
+                    if not server_exists(parts[2]):
+                        return self.json_response(404, {"ok": False, "error": "Server not found"})
+                    from runtime_manager import logs
+                    return self.json_response(200, {"ok": True, **logs(parts[2])})
+                if len(parts) == 4 and parts[3] == "files":
+                    if not server_exists(parts[2]):
+                        return self.json_response(404, {"ok": False, "error": "Server not found"})
+                    from urllib.parse import parse_qs
+                    from runtime_manager import list_files
+                    rel = parse_qs(urlparse(self.path).query).get("path", [""])[0]
+                    try:
+                        return self.json_response(200, {"ok": True, **list_files(SERVERS_DIR / parts[2], rel)})
+                    except ValueError as exc:
+                        return self.json_response(400, {"ok": False, "error": str(exc)})
             if path == "/api/servers":
                 with DB_LOCK, connect_db() as db:
                     rows = [dict(r) for r in db.execute("SELECT * FROM servers ORDER BY created_at DESC")]
                 return self.json_response(200, {"ok": True, "items": rows})
-            if path == "/api/connectors":
+            if path.startswith("/api/servers/"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 4:
+                server_id, action = parts[2], parts[3]
+                if not server_exists(server_id):
+                    return self.json_response(404, {"ok": False, "error": "Server not found"})
+                from runtime_manager import start, stop, command, change_file
+                try:
+                    if action == "start":
+                        with DB_LOCK, connect_db() as db:
+                            cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (server_id,)).fetchone()
+                        launch = str(data.get("launch_command") or (cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui"))
+                        state = start(server_id, SERVERS_DIR / server_id, launch)
+                        with DB_LOCK, connect_db() as db:
+                            db.execute("INSERT OR REPLACE INTO server_runtime(server_id,launch_command,updated_at) VALUES(?,?,?)", (server_id, launch, now()))
+                        add_activity("Game process started", server_id)
+                        return self.json_response(200, {"ok": True, "runtime": state})
+                    if action == "stop":
+                        state = stop(server_id)
+                        add_activity("Game process stopped", server_id)
+                        return self.json_response(200, {"ok": True, "runtime": state})
+                    if action == "command":
+                        return self.json_response(200, command(server_id, data.get("command", "")))
+                    if action == "configure":
+                        launch = str(data.get("launch_command", "")).strip()
+                        from runtime_manager import _validate
+                        _validate(launch)
+                        with DB_LOCK, connect_db() as db:
+                            db.execute("INSERT OR REPLACE INTO server_runtime(server_id,launch_command,updated_at) VALUES(?,?,?)", (server_id, launch, now()))
+                        return self.json_response(200, {"ok": True, "launch_command": launch})
+                    if action == "files":
+                        result = change_file(SERVERS_DIR / server_id, data.get("operation"), str(data.get("path", "")), data.get("content", ""))
+                        return self.json_response(200, {"ok": True, **result})
+                except (ValueError, RuntimeError, OSError) as exc:
+                    return self.json_response(400, {"ok": False, "error": str(exc)})
+            return self.json_response(404, {"ok": False, "error": "API route not found"})
+        if path == "/api/connectors":
                 with DB_LOCK, connect_db() as db:
                     rows = [dict(r) for r in db.execute("SELECT * FROM connectors ORDER BY created_at DESC")]
                 return self.json_response(200, {"ok": True, "items": rows})
