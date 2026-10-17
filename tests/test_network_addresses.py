@@ -27,7 +27,7 @@ def request(path, method="GET", payload=None, cookie=None, csrf=None):
 class NetworkAddressTests(unittest.TestCase):
     def setUp(self):
         with server.DB_LOCK, server.connect_db() as db:
-            for t in ("sessions","customers","server_ports","servers","server_runtime","users","activities","settings"):
+            for t in ("sessions","customers","server_ports","servers","server_runtime","billing_invoices","billing_plans","users","activities","settings"):
                 db.execute("DELETE FROM "+t)
         status,headers,data=request("/api/setup","POST",{"workspace_name":"Network Test","username":"net-owner","password":"long-enough-owner-password"})
         self.assertEqual(status,200,data)
@@ -70,12 +70,21 @@ class NetworkAddressTests(unittest.TestCase):
         self.assertEqual(status,201,customer)
         status,_,created=request("/api/servers","POST",{"name":"Assigned server","game":"Minecraft","panel":"Nexus (local)","status":"Configured","customer_id":customer["customer"]["id"]},self.cookie,self.csrf)
         self.assertEqual(status,201,created)
+        status,_,plan=request("/api/billing/plans","POST",{"name":"Customer Starter","description":"","currency":"PKR","price_minor":50000,"billing_interval":"month","ram_mb":2048,"cpu_percent":100,"disk_mb":10240,"server_limit":1},self.cookie,self.csrf)
+        self.assertEqual(status,201,plan)
+        status,_,invoice=request("/api/billing/invoices","POST",{"plan_id":plan["item"]["id"],"customer_user_id":customer["customer"]["id"]},self.cookie,self.csrf)
+        self.assertEqual(status,201,invoice)
+        self.assertEqual(invoice["item"]["customer_user_id"],customer["customer"]["id"])
         status,headers,login=request("/api/auth/login","POST",{"username":"customer-one","password":"customer-initial-password"})
         self.assertEqual(status,200,login)
         customer_cookie=headers.get("Set-Cookie")
         status,_,listed=request("/api/servers",cookie=customer_cookie)
         self.assertEqual(status,200,listed)
         self.assertEqual([x["id"] for x in listed["items"]],[created["item"]["id"]])
+        status,_,customer_invoices=request("/api/customer/invoices",cookie=customer_cookie)
+        self.assertEqual(status,200,customer_invoices)
+        self.assertEqual(len(customer_invoices["items"]),1)
+        self.assertEqual(customer_invoices["items"][0]["invoice_number"],invoice["item"]["invoice_number"])
         status,_,forbidden=request("/api/customers",cookie=customer_cookie)
         self.assertEqual(status,403,forbidden)
         status,_,second=request("/api/customers","POST",{"username":"customer-two","password":"customer-two-initial-password"},self.cookie,self.csrf)
