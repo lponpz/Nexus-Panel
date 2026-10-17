@@ -1,5 +1,6 @@
 """Integration tests for Minecraft connection address and port allocation."""
 import json, os, tempfile, threading, unittest, urllib.error, urllib.request
+from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 
 TEMP = tempfile.TemporaryDirectory(prefix="nexus-network-tests-")
@@ -65,6 +66,33 @@ class NetworkAddressTests(unittest.TestCase):
         self.assertFalse(ping["online"])
         self.assertEqual(ping["players"],0)
 
+    def test_player_list_and_inventory_api_are_available_to_assigned_server_owner(self):
+        status,_,created=request("/api/servers","POST",{"name":"Player API Test","game":"Minecraft","panel":"Nexus (local)","status":"Configured"},self.cookie,self.csrf)
+        self.assertEqual(status,201,created)
+        sid=created["item"]["id"]
+        with patch.object(server,"_minecraft_online_players",return_value={"online":True,"players":["Steve"],"count":1,"max_players":20,"raw":"There are 1 of a max of 20 players online: Steve"}):
+            status,_,players=request("/api/servers/"+sid+"/players",cookie=self.cookie)
+        self.assertEqual(status,200,players)
+        self.assertEqual(players["players"],["Steve"])
+        with patch.object(server,"_minecraft_inventory",return_value={"player":"Steve","items":[{"slot":0,"id":"minecraft:diamond","count":3}],"raw":"NBT"}):
+            status,_,inventory=request("/api/servers/"+sid+"/player-inventory?player=Steve",cookie=self.cookie)
+        self.assertEqual(status,200,inventory)
+        self.assertEqual(inventory["items"][0]["id"],"minecraft:diamond")
+    def test_player_name_validation_and_action_allowlist(self):
+        for value in ("Steve;op BadGuy","../Steve","", "name with spaces"):
+            with self.assertRaises(ValueError):
+                server._minecraft_player_name(value)
+        self.assertEqual(server._minecraft_player_name("Player_123"),"Player_123")
+        status,_,created=request("/api/servers","POST",{"name":"Player Action Test","game":"Minecraft","panel":"Nexus (local)","status":"Configured"},self.cookie,self.csrf)
+        self.assertEqual(status,201,created)
+        sid=created["item"]["id"]
+        with patch("runtime_manager.command") as send:
+            status,_,bad=request("/api/servers/"+sid+"/player-action","POST",{"player":"Steve;op BadGuy","action":"ban"},self.cookie,self.csrf)
+            self.assertEqual(status,400,bad)
+            send.assert_not_called()
+            status,_,good=request("/api/servers/"+sid+"/player-action","POST",{"player":"Steve","action":"gamemode","gamemode":"creative"},self.cookie,self.csrf)
+            self.assertEqual(status,200,good)
+            send.assert_called_once_with(sid,"gamemode creative Steve")
     def test_customer_sees_only_assigned_servers_and_cannot_access_admin_api(self):
         status,_,customer=request("/api/customers","POST",{"username":"customer-one","password":"customer-initial-password","email":"one@example.com"},self.cookie,self.csrf)
         self.assertEqual(status,201,customer)
