@@ -14,6 +14,7 @@ import re
 import tempfile
 import urllib.request
 import time
+import shutil
 from urllib.parse import urlparse
 from collections import deque
 from pathlib import Path
