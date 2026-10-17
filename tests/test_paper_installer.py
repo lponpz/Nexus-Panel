@@ -44,8 +44,11 @@ class PaperInstallerTests(unittest.TestCase):
         checksum = checksum or hashlib.sha256(payload).hexdigest()
         size = len(payload) if size is None else size
         return [
-            FakeResponse({"versions": [{"version": {"id": "1.21.11"}}]}, "https://fill.papermc.io/v3/projects/paper/versions"),
-            FakeResponse({
+            FakeResponse({"versions": [
+                {"version": {"id": "26.3", "java": {"version": {"minimum": 25}}, "support": {"status": "SUPPORTED"}}},
+                {"version": {"id": "1.21.11", "java": {"version": {"minimum": 21}}, "support": {"status": "SUPPORTED"}}}
+            ]}, "https://fill.papermc.io/v3/projects/paper/versions"),
+            FakeResponse([{
                 "id": 123,
                 "channel": "STABLE",
                 "downloads": {"server:default": {
@@ -54,13 +57,13 @@ class PaperInstallerTests(unittest.TestCase):
                     "checksums": {"sha256": checksum},
                     "size": size
                 }}
-            }, "https://fill.papermc.io/v3/projects/paper/versions/1.21.11/builds/latest"),
+            }], "https://fill.papermc.io/v3/projects/paper/versions/1.21.11/builds?channel=STABLE"),
             FakeResponse(payload, "https://fill-data.papermc.io/v1/objects/test/paper-1.21.11-123.jar")
         ]
 
     def test_installs_latest_stable_paper_and_verifies_hash(self):
         payload = b"paper-jar-test-content"
-        with patch("runtime_manager.urllib.request.urlopen", side_effect=self.responses(payload)):
+        with patch("runtime_manager._java_major", return_value=21), patch("runtime_manager.urllib.request.urlopen", side_effect=self.responses(payload)):
             result = runtime_manager.install_paper(self.root, "latest")
         self.assertEqual(result["version"], "1.21.11")
         self.assertTrue(result["installed"])
@@ -70,7 +73,7 @@ class PaperInstallerTests(unittest.TestCase):
     def test_checksum_mismatch_discards_download(self):
         payload = b"unexpected content"
         wrong_hash = "0" * 64
-        with patch("runtime_manager.urllib.request.urlopen", side_effect=self.responses(payload, checksum=wrong_hash)):
+        with patch("runtime_manager._java_major", return_value=21), patch("runtime_manager.urllib.request.urlopen", side_effect=self.responses(payload, checksum=wrong_hash)):
             with self.assertRaisesRegex(RuntimeError, "SHA-256"):
                 runtime_manager.install_paper(self.root, "latest")
         self.assertFalse((self.root / "server.jar").exists())
