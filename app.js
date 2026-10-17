@@ -11,7 +11,7 @@ const pages = {
   "Customers & Resellers":["Every tenant, <span>properly separated.</span>","Customer accounts and role-based tenant access are not implemented yet."],
   "Automation & AI":["Less repetition. <span>More control.</span>","Create safe workflows here in a later phase; no background jobs run yet."],
   "Extensions":["Make Nexus <span>your own.</span>","Manage add-ons here when the extension system is available."],
-  "Security & Audit":["Security with <span>visibility.</span>","Review locally recorded changes. Owner login and permissions still need implementation."],
+  "Security & Audit":["Security with <span>visibility.</span>","Review locally recorded changes and owner session controls."],
   "Settings":["Tune your <span>workspace.</span>","Workspace and integration settings."]
 };
 let currentPage = "Overview";
@@ -20,8 +20,17 @@ let cachedConnectors = [];
 function closeMenu(){ $("#sidebar").classList.remove("open"); $("#scrim").classList.remove("show"); }
 function openMenu(){ $("#sidebar").classList.add("open"); $("#scrim").classList.add("show"); }
 async function api(path, options = {}) {
-  const response = await fetch(path, {headers: {"Content-Type":"application/json"}, ...options});
+  const method = String(options.method || "GET").toUpperCase();
+  const headers = {"Content-Type":"application/json", ...(options.headers || {})};
+  if (["POST","PUT","PATCH","DELETE"].includes(method) && path !== "/api/setup" && path !== "/api/auth/login") {
+    const sessionResponse = await fetch("/api/auth/session", {credentials:"same-origin"});
+    const session = await sessionResponse.json().catch(() => ({}));
+    if (!session.authenticated) { location.replace("/login.html"); throw new Error("Please sign in again."); }
+    headers["X-Nexus-CSRF"] = session.csrf_token;
+  }
+  const response = await fetch(path, {...options, credentials:"same-origin", headers});
   const data = await response.json().catch(() => ({ok:false,error:"Server returned an invalid response"}));
+  if (response.status === 401) { location.replace("/login.html"); throw new Error("Login required."); }
   if (!response.ok || data.ok === false) throw new Error(data.error || ("Request failed: " + response.status));
   return data;
 }
@@ -174,7 +183,11 @@ document.addEventListener("click", async event => {
 $("#refresh").addEventListener("click", async () => { if (await refreshDashboard()) toast("Dashboard refreshed."); });
 $("#notifications").addEventListener("click", () => toast("Notifications will be enabled with the event system."));
 $("#activityOptions").addEventListener("click", () => showPage("Security & Audit"));
-$("#profileMenu").addEventListener("click", () => showPage("Settings"));
+$("#profileMenu").addEventListener("click", async () => {
+  if (!confirm("Sign out of Nexus Panel?")) return;
+  try { await api("/api/auth/logout", {method:"POST", body:"{}"}); location.replace("/login.html"); }
+  catch (error) { toast(error.message); }
+});
 $("#search").addEventListener("input", event => {
   const query = event.target.value.toLowerCase().trim();
   $$(".connector, #serverRows tr, .managed-server, .workspace-connector").forEach(row => { row.hidden = !!query && !row.innerText.toLowerCase().includes(query); });
