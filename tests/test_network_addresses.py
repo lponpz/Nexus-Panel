@@ -27,7 +27,7 @@ def request(path, method="GET", payload=None, cookie=None, csrf=None):
 class NetworkAddressTests(unittest.TestCase):
     def setUp(self):
         with server.DB_LOCK, server.connect_db() as db:
-            for t in ("sessions","server_ports","servers","server_runtime","users","activities","settings"):
+            for t in ("sessions","customers","server_ports","servers","server_runtime","users","activities","settings"):
                 db.execute("DELETE FROM "+t)
         status,headers,data=request("/api/setup","POST",{"workspace_name":"Network Test","username":"net-owner","password":"long-enough-owner-password"})
         self.assertEqual(status,200,data)
@@ -64,6 +64,22 @@ class NetworkAddressTests(unittest.TestCase):
         self.assertTrue(ping["supported"])
         self.assertFalse(ping["online"])
         self.assertEqual(ping["players"],0)
+
+    def test_customer_sees_only_assigned_servers_and_cannot_access_admin_api(self):
+        status,_,customer=request("/api/customers","POST",{"username":"customer-one","password":"customer-initial-password","email":"one@example.com"},self.cookie,self.csrf)
+        self.assertEqual(status,201,customer)
+        status,_,created=request("/api/servers","POST",{"name":"Assigned server","game":"Minecraft","panel":"Nexus (local)","status":"Configured","customer_id":customer["customer"]["id"]},self.cookie,self.csrf)
+        self.assertEqual(status,201,created)
+        status,headers,login=request("/api/auth/login","POST",{"username":"customer-one","password":"customer-initial-password"})
+        self.assertEqual(status,200,login)
+        customer_cookie=headers.get("Set-Cookie")
+        status,_,listed=request("/api/servers",cookie=customer_cookie)
+        self.assertEqual(status,200,listed)
+        self.assertEqual([x["id"] for x in listed["items"]],[created["item"]["id"]])
+        status,_,forbidden=request("/api/customers",cookie=customer_cookie)
+        self.assertEqual(status,403,forbidden)
+        status,_,other=request("/api/servers/not-their-server",cookie=customer_cookie)
+        self.assertEqual(status,404,other)
 
     def test_other_games_do_not_claim_minecraft_port(self):
         status,_,created=request("/api/servers","POST",{"name":"FiveM record","game":"FiveM","panel":"Nexus (local)","status":"Configured"},self.cookie,self.csrf)
