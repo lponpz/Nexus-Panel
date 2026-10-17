@@ -42,11 +42,11 @@ function renderServers(items) {
   cachedServers = items;
   const tbody = $("#serverRows");
   if (tbody) tbody.innerHTML = !items.length ? '<tr><td colspan="6" class="empty-state">No server records yet. Use “Add server” to create one.</td></tr>' :
-    items.map(item => '<tr data-search="' + esc([item.name,item.game,item.panel].join(" ").toLowerCase()) + '">' +
+    items.map(item => '<tr data-search="' + esc([item.name,item.game,item.panel,item.connect_address].join(" ").toLowerCase()) + '">' +
       '<td><div class="server-name"><span class="game ' + gameClass(item.game) + '">' + gameLetter(item.game) + '</span><div><strong>' + esc(item.name) + '</strong><small>' + esc(item.id.slice(0,8)) + '</small></div></div></td>' +
       '<td>' + esc(item.game) + '</td><td><span class="tag">' + esc(item.panel) + '</span></td>' +
       '<td><span class="server-status ' + statusClass(item.status) + '"><i></i>' + esc(item.status) + '</span></td>' +
-      '<td><span>Not connected</span></td><td><button class="record-manage" data-manage-server="' + esc(item.id) + '">Manage</button></td></tr>').join("");
+      '<td>' + (item.connect_address ? '<button class="address-copy" data-copy-address="' + esc(item.connect_address) + '">' + esc(item.connect_address) + '</button><small class="address-hint">' + (item.public_address_configured ? 'Public address set' : 'Local only · configure public IP') + '</small>' : '<span>Address unavailable for this adapter</span>') + '</td><td><button class="record-manage" data-manage-server="' + esc(item.id) + '">Manage</button></td></tr>').join("");
 }
 function renderConnectors(items) {
   cachedConnectors = items;
@@ -72,7 +72,9 @@ function renderPageWorkspace(page) {
   root.hidden = false;
   if (page === "Game Servers") {
     root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Your game servers</h2><p>Use Console and File Manager for each server. Java runtime currently supports Java server JARs.</p></div><button class="button primary" id="workspaceAddServer">＋ Add server</button></div>' +
-      (cachedServers.length ? '<div class="managed-server-grid">' + cachedServers.map(item => '<article class="managed-server"><div class="managed-server-top"><span class="game ' + gameClass(item.game) + '">' + gameLetter(item.game) + '</span><span class="server-status ' + statusClass(item.status) + '"><i></i>' + esc(item.status) + '</span></div><h3>' + esc(item.name) + '</h3><p>' + esc(item.game) + ' · ' + esc(item.panel) + '</p><div class="managed-server-id">ID · ' + esc(item.id) + '</div><div class="managed-server-actions"><button class="button secondary" data-manage-server="' + esc(item.id) + '">Manage server</button><button class="button danger" data-delete-server="' + esc(item.id) + '">Delete</button></div><small class="runtime-note">Java runtime · server.jar required</small></article>').join("") + '</div>' : '<div class="empty-panel"><span>▣</span><h3>No servers yet</h3><p>Create your first server record to see it here.</p><button class="button primary" id="workspaceAddServer">＋ Create server</button></div>') + '</section>' +
+      '<section class="network-address-panel"><div><h3>Public Minecraft address</h3><p>Set the public IP or DNS name of the machine that runs these game servers.</p></div><form id="publicHostForm" class="public-host-form"><input id="publicHostInput" maxlength="253" placeholder="e.g. 203.0.113.10 or mc.example.com" aria-label="Public IP or hostname"><button class="button secondary" type="submit">Save address</button></form><small id="publicHostStatus">Loading network settings…</small></section>' +
+      (cachedServers.length ? '<div class="managed-server-grid">' + cachedServers.map(item => '<article class="managed-server"><div class="managed-server-top"><span class="game ' + gameClass(item.game) + '">' + gameLetter(item.game) + '</span><span class="server-status ' + statusClass(item.status) + '"><i></i>' + esc(item.status) + '</span></div><h3>' + esc(item.name) + '</h3><p>' + esc(item.game) + ' · ' + esc(item.panel) + '</p>' + (item.connect_address ? '<div class="server-address-card"><small>JOIN ADDRESS · ' + esc(item.connection_type || 'Game') + '</small><strong>' + esc(item.connect_address) + '</strong><button class="button secondary" data-copy-address="' + esc(item.connect_address) + '">Copy IP</button><small>' + (item.public_address_configured ? 'Public address configured' : 'LOCAL ONLY — set your public IP above') + '</small></div>' : '') + '<div class="managed-server-id">ID · ' + esc(item.id) + '</div><div class="managed-server-actions"><button class="button secondary" data-manage-server="' + esc(item.id) + '">Manage server</button><button class="button danger" data-delete-server="' + esc(item.id) + '">Delete</button></div><small class="runtime-note">' + (item.game === 'Minecraft' && item.connect_port ? 'Java Edition · TCP port ' + esc(item.connect_port) + ' · Paper installer available' : 'Runtime adapter needed for this game') + '</small></article>').join("") + '</div>' : '<div class="empty-panel"><span>▣</span><h3>No servers yet</h3><p>Create your first Minecraft server and Nexus will reserve a unique game port.</p><button class="button primary" id="workspaceAddServer">＋ Create server</button></div>') + '</section>' +
+      '<div class="notice-panel"><strong>Joinability:</strong> each locally managed Minecraft server receives a unique TCP port. Install Paper, accept the EULA, start it, set the public IP/domain above, and allow that port through the host/cloud firewall and router. A displayed IP alone cannot bypass network restrictions. FiveM/Terraria runtimes are not enabled yet.</div>' +
       '<div class="notice-panel"><strong>Important:</strong> Nexus can launch a local Java server process, show console output, send game commands, and manage files after you upload server.jar. Remote node agents, resource telemetry, and production multi-user security still need implementation.</div>';
   } else if (page === "Panel Connectors") {
     root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Panel connections</h2><p>Stored endpoints, not yet authenticated.</p></div><button class="button primary" id="workspaceConnect">＋ Add connector</button></div><div class="workspace-connector-list">' +
@@ -111,6 +113,29 @@ function renderPageWorkspace(page) {
     }[page] || ["Workspace","Nexus Panel","This section is not available yet."];
     root.innerHTML = '<section class="card workspace-card placeholder-workspace"><div class="placeholder-icon">✦</div><h2>' + esc(content[0]) + '</h2><p>' + esc(content[1]) + '</p><div class="notice-panel">' + esc(content[2]) + '</div></section>';
   }
+}
+async function loadNetworkAddress(root) {
+  const form = root.querySelector("#publicHostForm");
+  if (!form) return;
+  const input = root.querySelector("#publicHostInput");
+  const status = root.querySelector("#publicHostStatus");
+  try {
+    const d = await api("/api/network/public-host");
+    input.value = d.public_host || "";
+    status.textContent = d.configured
+      ? "Public address set. Configure firewall/router rules for each allocated TCP port."
+      : "No public host set. 127.0.0.1 addresses work only on the same machine.";
+    if (d.environment_override) { input.disabled = true; form.querySelector("button").disabled = true; status.textContent = "Public host is configured by NEXUS_PUBLIC_HOST in the environment."; }
+  } catch (error) { status.textContent = error.message; }
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    try {
+      const saved = await api("/api/network/public-host", {method:"POST",body:JSON.stringify({public_host:input.value.trim()})});
+      toast(saved.configured ? "Public game address saved." : "Public address cleared.");
+      await refreshDashboard();
+      loadNetworkAddress($("#pageWorkspace"));
+    } catch (error) { toast(error.message); }
+  }, {once:true});
 }
 async function loadBillingWorkspace(root) {
   const plansRoot = root.querySelector("#billingPlanList");
@@ -219,8 +244,8 @@ $("#connectForm").addEventListener("submit", async event => {
 $("#serverForm").addEventListener("submit", async event => {
   event.preventDefault();
   try {
-    await api("/api/servers",{method:"POST",body:JSON.stringify({name:$("#serverName").value.trim(),game:$("#serverGame").value,panel:$("#serverPanel").value,status:"Configured"})});
-    $("#serverDialog").close(); $("#serverForm").reset(); toast("Server record created."); await refreshDashboard(); showPage("Game Servers");
+    const created = await api("/api/servers",{method:"POST",body:JSON.stringify({name:$("#serverName").value.trim(),game:$("#serverGame").value,panel:$("#serverPanel").value,status:"Configured"})});
+    $("#serverDialog").close(); $("#serverForm").reset(); toast(created.item.connect_address ? "Server created. Join address: " + created.item.connect_address : "Server record created."); await refreshDashboard(); showPage("Game Servers");
   } catch (error) { toast(error.message); }
 });
 function openManageServer(id) {
@@ -247,6 +272,11 @@ $("#manageServerForm").addEventListener("submit", async event => {
 document.addEventListener("click", async event => {
   const target = event.target.closest("button");
   if (!target) return;
+  if (target.dataset.copyAddress) {
+    try { await navigator.clipboard.writeText(target.dataset.copyAddress); toast("Join address copied: " + target.dataset.copyAddress); }
+    catch (error) { window.prompt("Copy this game address:", target.dataset.copyAddress); }
+    return;
+  }
   if (target.dataset.manageServer) { openManageServer(target.dataset.manageServer); return; }
   if (target.id === "workspaceAddServer") { $("#serverDialog").showModal(); return; }
   if (target.id === "workspaceConnect") { openDialog(); return; }
