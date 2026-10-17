@@ -56,6 +56,15 @@ class NetworkAddressTests(unittest.TestCase):
         self.assertEqual(status,201)
         self.assertTrue(created["item"]["public_address_configured"])
         self.assertTrue(created["item"]["connect_address"].startswith("mc.example.com:"))
+    def test_live_status_endpoint_reports_offline_server(self):
+        status,_,created=request("/api/servers","POST",{"name":"Offline Ping Test","game":"Minecraft","panel":"Nexus (local)","status":"Configured"},self.cookie,self.csrf)
+        self.assertEqual(status,201,created)
+        status,_,ping=request("/api/servers/"+created["item"]["id"]+"/game-status",cookie=self.cookie)
+        self.assertEqual(status,200,ping)
+        self.assertTrue(ping["supported"])
+        self.assertFalse(ping["online"])
+        self.assertEqual(ping["players"],0)
+
     def test_other_games_do_not_claim_minecraft_port(self):
         status,_,created=request("/api/servers","POST",{"name":"FiveM record","game":"FiveM","panel":"Nexus (local)","status":"Configured"},self.cookie,self.csrf)
         self.assertEqual(status,201)
