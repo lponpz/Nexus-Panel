@@ -211,22 +211,16 @@ class Handler(SimpleHTTPRequestHandler):
         return data
     def do_GET(self):
         path = urlparse(self.path).path
-        if path in ("/", "/index.html") and configured() and not current_session(self):
-            self.send_response(302); self.send_header("Location", "/login.html"); self.end_headers(); return
+        if path in ("/", "/index.html") and configured():
+            if not has_owner():
+                self.send_response(302); self.send_header("Location", "/installer.html"); self.end_headers(); return
+            if not current_session(self):
+                self.send_response(302); self.send_header("Location", "/login.html"); self.end_headers(); return
         if path == "/api/auth/session":
             session = current_session(self)
             if not session:
                 return self.json_response(200, {"ok": True, "authenticated": False})
             return self.json_response(200, {"ok": True, "authenticated": True, "username": session["username"], "role": session["role"], "csrf_token": session["csrf_token"]})
-        if path == "/api/auth/logout":
-            session = current_session(self)
-            if session:
-                cookie = self.headers.get("Cookie", "")
-                token = next((v.strip().split("=",1)[1] for v in cookie.split(";") if v.strip().startswith("nexus_session=")), "")
-                if token:
-                    with DB_LOCK, connect_db() as db:
-                        db.execute("DELETE FROM sessions WHERE token_hash=?", (_token_digest(token),))
-            return self.json_response(200, {"ok": True, "authenticated": False}, [("Set-Cookie", "nexus_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")])
         if path.startswith("/api/") and not self.api_authenticated():
             return
         if path == "/api/health":
@@ -332,7 +326,9 @@ class Handler(SimpleHTTPRequestHandler):
         try: data = self.read_json()
         except ValueError as exc: return self.json_response(400, {"ok": False, "error": str(exc)})
         if path == "/api/setup":
-            if configured() or has_owner():
+            if not valid_origin(self):
+                return self.auth_error(403, "Request origin rejected.")
+            if has_owner():
                 return self.auth_error(403, "Initial setup is already complete. Sign in instead.")
             name = str(data.get("workspace_name", "Nexus Workspace")).strip()
             username = str(data.get("username", "")).strip()
