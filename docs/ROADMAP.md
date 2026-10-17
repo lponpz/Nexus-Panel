@@ -33,7 +33,7 @@ A planned feature is not complete until implemented, tested, and documented. The
 ## Selected Nexus features (user-approved scope)
 - [x] Automatic Backup Scheduler (local storage, configurable interval, 20-backup retention).
 - [ ] Mod Compatibility Checker.
-- [ ] Hosting Plan Builder.
+- [x] Hosting Plan Builder (owner CRUD for enabled/disabled plans, currency/interval and resource limits; automated billing integration remains pending).
 - [ ] Nexus Plugin Marketplace.
 - [ ] Expiry Grace Dashboard.
 - [ ] Free Server Queue.
