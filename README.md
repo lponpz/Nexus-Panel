@@ -4,12 +4,19 @@
 
 Nexus has its own Blue Neon web UI, Python API, SQLite state, installer, per-server workspace, Java process adapter, browser console, and basic file manager. It is not a fork of Pterodactyl. The current runtime is a development adapter, not yet a production-grade Wings/node replacement.
 
-## Run in GitHub Codespaces
+## One-command setup (Linux / GitHub Codespaces)
+
+From the repository root, run:
 
 ```bash
-git pull
-bash ./nexus
+bash setup.sh
 ```
+
+The bootstrap checks Python, compiles the Python modules, creates the local data directories and SQLite database, attempts to install OpenJDK 21 when Java is missing on an apt-based Linux host, and starts the panel. If Java installation requires unavailable privileges or the package is unavailable, it stops with an explicit message. On later runs, use `bash ./nexus`.
+
+Open the installer/dashboard URL printed by the launcher. If it does not open automatically, open the matching port in the Codespaces **Ports** tab. Keep that port **Private**.
+
+**Node scope:** this one-command bootstrap prepares the local development runtime on the machine where it runs. It cannot provision remote VPS nodes that you have not given access to; a secure remote node agent and authenticated pairing still need to be built before claiming multi-node hosting.
 
 Open the installer/dashboard URL printed by the launcher. If it does not open automatically, open the matching port in the Codespaces **Ports** tab. Keep that port **Private**.
 
