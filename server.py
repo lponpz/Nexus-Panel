@@ -86,10 +86,13 @@ def init_db():
             plan_name TEXT NOT NULL, customer_name TEXT NOT NULL, customer_email TEXT NOT NULL,
             currency TEXT NOT NULL, amount_minor INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
             payment_reference TEXT, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
-            due_at TEXT NOT NULL, paid_at TEXT,
+            due_at TEXT NOT NULL, paid_at TEXT, customer_user_id TEXT,
             FOREIGN KEY(plan_id) REFERENCES billing_plans(id) ON DELETE SET NULL
         );
         """)
+        invoice_columns = {row["name"] for row in db.execute("PRAGMA table_info(billing_invoices)")}
+        if "customer_user_id" not in invoice_columns:
+            db.execute("ALTER TABLE billing_invoices ADD COLUMN customer_user_id TEXT")
         # Forward-compatible migration for databases created before tenant ownership.
         server_columns = {row["name"] for row in db.execute("PRAGMA table_info(servers)")}
         if "owner_user_id" not in server_columns:
@@ -459,7 +462,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json_response(200, {"ok": True, "authenticated": True, "username": session["username"], "role": session["role"], "csrf_token": session["csrf_token"]})
         if path.startswith("/api/") and not self.api_authenticated():
             return
-        if path.startswith("/api/") and path not in ("/api/health", "/api/setup", "/api/auth/session", "/api/servers") and not path.startswith("/api/servers/"):
+        if path.startswith("/api/") and path not in ("/api/health", "/api/setup", "/api/auth/session", "/api/servers", "/api/customer/invoices") and not path.startswith("/api/servers/"):
             if not owner_only(self): return
         if path == "/api/health":
             return self.json_response(200, {"ok": True, "app": "Nexus Panel", "mode": "local-dev", "database": "sqlite", "timestamp": now()})
@@ -473,6 +476,13 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/billing/invoices":
             with DB_LOCK, connect_db() as db:
                 rows = [dict(row) for row in db.execute("SELECT * FROM billing_invoices ORDER BY created_at DESC LIMIT 500")]
+            return self.json_response(200, {"ok": True, "items": rows})
+        if path == "/api/customer/invoices":
+            session = current_session(self)
+            if not session or session.get("role") != "customer":
+                return self.json_response(403, {"ok": False, "error": "Customer account required."})
+            with DB_LOCK, connect_db() as db:
+                rows = [dict(row) for row in db.execute("SELECT invoice_number,plan_name,currency,amount_minor,status,created_at,due_at,paid_at,payment_reference FROM billing_invoices WHERE customer_user_id=? ORDER BY created_at DESC LIMIT 200", (session["user_id"],))]
             return self.json_response(200, {"ok": True, "items": rows})
         if path == "/api/network/public-host":
             host = public_host()
