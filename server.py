@@ -817,6 +817,7 @@ class Handler(SimpleHTTPRequestHandler):
             with DB_LOCK, connect_db() as db:
                 db.execute("DELETE FROM backups WHERE server_id=?", (item_id,))
                 db.execute("DELETE FROM backup_schedules WHERE server_id=?", (item_id,))
+                db.execute("DELETE FROM server_ports WHERE server_id=?", (item_id,))
                 db.execute("DELETE FROM server_runtime WHERE server_id=?", (item_id,))
                 db.execute("DELETE FROM servers WHERE id=?", (item_id,))
             server_dir = (SERVERS_DIR / item_id).resolve()
