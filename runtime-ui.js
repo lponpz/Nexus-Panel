@@ -2,8 +2,17 @@
   const q = (s, root=document) => root.querySelector(s);
   let serverId = null, poll = null;
   const api = async (url, options={}) => {
-    const res = await fetch(url, Object.assign({headers:{"Content-Type":"application/json"}},options));
+    const method = String(options.method || "GET").toUpperCase();
+    const headers = Object.assign({"Content-Type":"application/json"}, options.headers || {});
+    if (["POST","PUT","PATCH","DELETE"].includes(method)) {
+      const sr = await fetch("/api/auth/session", {credentials:"same-origin"});
+      const session = await sr.json().catch(()=>({}));
+      if (!session.authenticated) { location.replace("/login.html"); throw new Error("Please sign in again."); }
+      headers["X-Nexus-CSRF"] = session.csrf_token;
+    }
+    const res = await fetch(url, Object.assign({},options,{credentials:"same-origin",headers}));
     const data = await res.json().catch(()=>({ok:false,error:"Invalid response"}));
+    if (res.status === 401) { location.replace("/login.html"); throw new Error("Login required."); }
     if (!res.ok || data.ok === false) throw new Error(data.error || ("Request failed: " + res.status));
     return data;
   };
@@ -20,7 +29,7 @@
   }
   async function openConsole(id, name) {
     serverId=id;
-    const overlay=showModal(name+" — Console",'<div class="nx-tools"><button data-nx-start>Start</button><button data-nx-stop>Stop</button><button data-nx-refresh>Refresh</button><span class="nx-muted" data-nx-state>Checking process…</span></div><pre class="nx-console" data-nx-output>Loading logs…</pre><form class="nx-row" data-nx-command><input maxlength="1000" placeholder="Enter game console command…" required><button class="nx-action">Send</button></form><div class="nx-row"><input data-launch value="java -Xms1G -Xmx2G -jar server.jar nogui" maxlength="500"><button class="nx-action" data-save-launch>Save launch command</button></div><p class="nx-muted">Java server only in this runtime adapter. Upload server.jar in the server folder first. This does not yet provide authentication; keep the forwarded port private.</p>');
+    const overlay=showModal(name+" — Console",'<div class="nx-tools"><button data-nx-start>Start</button><button data-nx-stop>Stop</button><button data-nx-refresh>Refresh</button><span class="nx-muted" data-nx-state>Checking process…</span></div><pre class="nx-console" data-nx-output>Loading logs…</pre><form class="nx-row" data-nx-command><input maxlength="1000" placeholder="Enter game console command…" required><button class="nx-action">Send</button></form><div class="nx-row"><input data-launch value="java -Xms1G -Xmx2G -jar server.jar nogui" maxlength="500"><button class="nx-action" data-save-launch>Save launch command</button></div><p class="nx-muted">Java server only in this runtime adapter. Upload server.jar in the server folder first. Owner login is enabled; keep the forwarded port private until node isolation and deployment hardening are complete.</p>');
     const output=q("[data-nx-output]",overlay), state=q("[data-nx-state]",overlay);
     async function refresh(){try{const d=await api(url("/console"));output.textContent=(d.logs||[]).map(x=>"["+x.time+"] "+x.text).join("\n")||"No logs yet.";output.scrollTop=output.scrollHeight;state.textContent=d.running?"Running":"Stopped";}catch(e){output.textContent=e.message;}}
     q("[data-nx-start]",overlay).onclick=async()=>{try{await api(url("/start"),{method:"POST",body:JSON.stringify({launch_command:q("[data-launch]",overlay).value})});await refresh();}catch(e){state.textContent=e.message;}};
