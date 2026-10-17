@@ -62,7 +62,7 @@ def _java_major():
             return int(pieces[1] if pieces[0] == "1" and len(pieces) > 1 else pieces[0])
         except ValueError:
             pass
-    openjdk_match = re.search(r"openjdk (\\d+)", output, re.IGNORECASE)
+    openjdk_match = re.search(r"openjdk (\d+)", output, re.IGNORECASE)
     if openjdk_match:
         return int(openjdk_match.group(1))
     raise RuntimeError("Could not determine the installed Java version.")
@@ -79,7 +79,7 @@ def _paper_versions():
         if not isinstance(item, dict):
             continue
         candidate = item.get("id")
-        if not isinstance(candidate, str) or not re.fullmatch(r"\\d+\\.\\d+(?:\\.\\d+)?", candidate):
+        if not isinstance(candidate, str) or not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", candidate):
             continue
         java_info = item.get("java", {})
         java_version = java_info.get("version", {}) if isinstance(java_info, dict) else {}
@@ -103,7 +103,7 @@ def install_paper(directory, version="latest"):
     jar = root / "server.jar"
     if jar.exists():
         raise ValueError("server.jar already exists. Move or delete it before installing Paper.")
-    if version != "latest" and not re.fullmatch(r"\\d+\\.\\d+(?:\\.\\d+)?", str(version)):
+    if version != "latest" and not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", str(version)):
         raise ValueError("Choose 'latest' or a Minecraft version such as 1.21.11.")
     java_major = _java_major()
     versions = _paper_versions()
