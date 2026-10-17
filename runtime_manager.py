@@ -13,6 +13,7 @@ import os
 import re
 import tempfile
 import urllib.request
+import time
 from urllib.parse import urlparse
 from collections import deque
 from pathlib import Path
@@ -21,6 +22,7 @@ from datetime import datetime, timezone
 _LOCK = threading.RLock()
 _PROCESSES = {}
 _LOG_LIMIT = 500
+_METRIC_SAMPLES = {}
 
 
 def _now():
@@ -241,6 +243,75 @@ def snapshot(server_id):
         if not item:
             return {"running": False, "pid": None}
         return {"running": item["process"].poll() is None, "pid": item["process"].pid, "started_at": item["started_at"]}
+
+
+def process_metrics(server_id):
+    with _LOCK:
+        item = _PROCESSES.get(server_id)
+        if not item:
+            return {"available": False, "running": False, "pid": None, "cpu_percent": None, "memory_rss_mb": 0, "memory_vms_mb": 0}
+        process = item["process"]
+        running = process.poll() is None
+        pid = process.pid
+        started_at = item["started_at"]
+    if not running:
+        return {"available": False, "running": False, "pid": pid, "cpu_percent": None, "memory_rss_mb": 0, "memory_vms_mb": 0}
+    status_path = Path("/proc") / str(pid) / "status"
+    stat_path = Path("/proc") / str(pid) / "stat"
+    if not status_path.is_file() or not stat_path.is_file():
+        return {"available": False, "running": True, "pid": pid, "cpu_percent": None, "memory_rss_mb": None, "memory_vms_mb": None}
+    memory = {}
+    for line in status_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.startswith(("VmRSS:", "VmSize:")):
+            key, value, *_ = line.split()
+            memory[key.rstrip(":")] = int(value) * 1024
+    stat_text = stat_path.read_text(encoding="utf-8", errors="replace")
+    fields = stat_text[stat_text.rfind(")") + 1:].split()
+    ticks = os.sysconf("SC_CLK_TCK")
+    cpu_seconds = (int(fields[11]) + int(fields[12])) / ticks
+    sampled_at = time.monotonic()
+    cpu_percent = None
+    with _LOCK:
+        previous = _METRIC_SAMPLES.get(server_id)
+        _METRIC_SAMPLES[server_id] = (sampled_at, cpu_seconds)
+    if previous:
+        elapsed = sampled_at - previous[0]
+        if elapsed > 0:
+            cpu_percent = round(max(0.0, (cpu_seconds - previous[1]) / elapsed * 100.0), 1)
+            cpu_percent = min(cpu_percent, float((os.cpu_count() or 1) * 100))
+    try:
+        started = datetime.fromisoformat(started_at)
+        uptime = max(0, int((datetime.now(timezone.utc) - started).total_seconds()))
+    except (ValueError, TypeError):
+        uptime = None
+    return {"available": True, "running": True, "pid": pid, "cpu_percent": cpu_percent,
+            "memory_rss_mb": round(memory.get("VmRSS", 0) / (1024 * 1024), 1),
+            "memory_vms_mb": round(memory.get("VmSize", 0) / (1024 * 1024), 1),
+            "cpu_time_seconds": round(cpu_seconds, 2), "uptime_seconds": uptime}
+
+
+def host_metrics(storage_path):
+    cpu_count = os.cpu_count() or 1
+    load_1m = None
+    try:
+        load_1m = round(os.getloadavg()[0], 2)
+    except (AttributeError, OSError):
+        pass
+    total_kb = available_kb = None
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("MemTotal:"):
+                total_kb = int(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                available_kb = int(line.split()[1])
+    except OSError:
+        pass
+    disk = shutil.disk_usage(storage_path)
+    return {"available": total_kb is not None, "cpu_count": cpu_count, "load_1m": load_1m,
+            "memory_total_mb": round(total_kb / 1024, 1) if total_kb is not None else None,
+            "memory_available_mb": round(available_kb / 1024, 1) if available_kb is not None else None,
+            "disk_total_gb": round(disk.total / (1024 ** 3), 2),
+            "disk_free_gb": round(disk.free / (1024 ** 3), 2)}
 
 
 def logs(server_id):
