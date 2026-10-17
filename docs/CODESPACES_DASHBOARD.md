@@ -1,13 +1,12 @@
 # Dashboard port in Codespaces
 
-Run the one-command launcher from the repository root:
+Run from the repository root:
 
-```bash
-bash ./nexus
-```
+    git pull
+    bash ./nexus
 
-It starts the static frontend dashboard on port 8000 (or `NEXUS_PORT` if set), prints the Codespaces forwarded URL, and opens the terminal Control Center. The dashboard server runs in the background.
+The launcher starts the SQLite-backed Python application on port 8000 (or NEXUS_PORT if set), checks the health endpoint, and prints the Codespaces URL. If the browser does not open automatically, open the Ports tab and click the forwarded URL. Outside Codespaces, use http://localhost:8000.
 
-In Codespaces, the configured port 8000 is labeled **Nexus Panel Dashboard** and requests the browser to open when forwarded. If it does not open automatically, open the **Ports** tab in VS Code/Codespaces and click the forwarded port URL. Outside Codespaces, visit `http://localhost:8000`.
+The app has a working local database and APIs for creating/removing server records and saving/removing connector endpoint records. The dashboard shows actual saved counts and local activity events.
 
-This serves the current static frontend only. Authentication, database, backend APIs, panel installation and actual server operations are not implemented yet. Do not expose a production service publicly using this development server.
+**Keep the forwarded port Private.** This MVP does not yet implement login/authentication, live Pterodactyl/Pelican/AMP adapters, game process controls, backups, or billing. Saved connector endpoints are not tested and do not imply a real connection. Do not enter API tokens or expose this development server publicly.
