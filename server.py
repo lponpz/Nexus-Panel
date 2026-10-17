@@ -445,8 +445,13 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/", "/index.html", "/studio.html", "/customer.html"):
             if not configured() or not has_owner():
                 self.send_response(302); self.send_header("Location", "/installer.html"); self.end_headers(); return
-            if not current_session(self):
+            page_session = current_session(self)
+            if not page_session:
                 self.send_response(302); self.send_header("Location", "/login.html"); self.end_headers(); return
+            if page_session.get("role") == "customer" and path != "/customer.html":
+                self.send_response(302); self.send_header("Location", "/customer.html"); self.end_headers(); return
+            if page_session.get("role") == "owner" and path == "/customer.html":
+                self.send_response(302); self.send_header("Location", "/index.html"); self.end_headers(); return
         if path == "/api/auth/session":
             session = current_session(self)
             if not session:
@@ -620,7 +625,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path.startswith("/api/servers/") and path.endswith("/file-upload"):
             parts = path.strip("/").split("/")
-            if len(parts) != 4 or not server_exists(parts[2]): return self.json_response(404, {"ok": False, "error": "Server not found"})
+            if len(parts) != 4 or not can_access_server(self, parts[2]): return self.json_response(404, {"ok": False, "error": "Server not found"})
             query = parse_qs(urlparse(self.path).query)
             name, folder = query.get("name", [""])[0], query.get("path", [""])[0]
             if not name or name in (".", "..") or "/" in name or chr(92) in name or any(ord(c) < 32 for c in name):
