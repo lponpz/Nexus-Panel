@@ -1,11 +1,14 @@
 # One-command launch
 
-To clone the repository and immediately open the terminal menu, run:
+From the repository root in GitHub Codespaces, run:
 
-```bash
-git clone https://github.com/lponpz/Nexus-Panel.git && cd Nexus-Panel && bash ./nexus
-```
+    git pull
+    bash ./nexus
 
-The numeric shortcuts are **1–9** to open menu items and **0** to exit. Arrow keys + Enter also work.
+The launcher starts the Python backend, initializes SQLite, checks /api/health, and prints the dashboard URL. Open port 8000 from the Codespaces Ports tab if the browser does not open automatically.
 
-This clones the source and opens the TUI. It does **not** yet install a production-ready hosted service: the repository is currently a frontend prototype, and destructive/admin actions are deliberately disabled until a real backend and verified installer are implemented.
+To clone for the first time:
+
+    git clone https://github.com/lponpz/Nexus-Panel.git && cd Nexus-Panel && bash ./nexus
+
+This is a working local MVP: server records and connector endpoint records can be created and deleted and are stored in SQLite. It is not yet a production panel; no login/authentication or external panel-control adapter is implemented. Keep the Codespaces port private and do not enter API tokens.
