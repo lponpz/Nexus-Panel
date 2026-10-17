@@ -162,6 +162,77 @@ def configure_minecraft_properties(server_id, port):
     temp.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
     os.replace(temp, path)
 
+def _write_varint(value):
+    value = int(value) & 0xFFFFFFFF
+    out = bytearray()
+    while True:
+        part = value & 0x7F
+        value >>= 7
+        if value:
+            part |= 0x80
+        out.append(part)
+        if not value:
+            return bytes(out)
+
+def _read_varint(sock):
+    value = 0
+    for index in range(5):
+        raw = sock.recv(1)
+        if not raw:
+            raise ConnectionError("Minecraft server closed the status connection.")
+        byte = raw[0]
+        value |= (byte & 0x7F) << (7 * index)
+        if not byte & 0x80:
+            return value
+    raise ValueError("Invalid Minecraft status packet length.")
+
+def _recv_exact(sock, count):
+    chunks = bytearray()
+    while len(chunks) < count:
+        part = sock.recv(count - len(chunks))
+        if not part:
+            raise ConnectionError("Minecraft server closed the status packet.")
+        chunks.extend(part)
+    return bytes(chunks)
+
+def minecraft_status(port, timeout=1.5):
+    """Query a local Java Edition server using the vanilla Server List Ping protocol."""
+    import json as _json
+    import time as _time
+    started = _time.monotonic()
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=timeout) as sock:
+            sock.settimeout(timeout)
+            host = b"localhost"
+            handshake = (b"\x00" + _write_varint(767) + _write_varint(len(host)) + host
+                         + int(port).to_bytes(2, "big") + b"\x01")
+            packet = _write_varint(len(handshake)) + handshake
+            sock.sendall(packet + b"\x01\x00")
+            packet_length = _read_varint(sock)
+            if packet_length < 1 or packet_length > 1_048_576:
+                raise ValueError("Invalid Minecraft status response size.")
+            packet_id = _read_varint(sock)
+            if packet_id != 0:
+                raise ValueError("Unexpected Minecraft status response packet.")
+            json_length = _read_varint(sock)
+            if json_length < 2 or json_length > 1_048_576 or json_length > packet_length:
+                raise ValueError("Invalid Minecraft status JSON size.")
+            payload = _json.loads(_recv_exact(sock, json_length).decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Invalid Minecraft status JSON.")
+            players = payload.get("players") if isinstance(payload.get("players"), dict) else {}
+            version = payload.get("version") if isinstance(payload.get("version"), dict) else {}
+            description = payload.get("description", "")
+            if isinstance(description, dict):
+                description = description.get("text", "")
+            elif isinstance(description, list):
+                description = " ".join(str(x.get("text", "")) if isinstance(x, dict) else str(x) for x in description)
+            return {"online": True, "players": int(players.get("online", 0)), "max_players": int(players.get("max", 0)),
+                    "version": str(version.get("name", "Unknown"))[:80], "motd": str(description)[:200],
+                    "latency_ms": round((_time.monotonic() - started) * 1000)}
+    except (OSError, ValueError, UnicodeError, ConnectionError, TimeoutError, _json.JSONDecodeError):
+        return {"online": False, "players": 0, "max_players": 0, "version": None, "motd": None, "latency_ms": None}
+
 def server_connection_info(item):
     result = dict(item)
     with DB_LOCK, connect_db() as db:
@@ -393,6 +464,13 @@ class Handler(SimpleHTTPRequestHandler):
                     cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
                     item = db.execute("SELECT * FROM servers WHERE id=?", (sid,)).fetchone()
                 return self.json_response(200, {"ok": True, "runtime": snapshot(sid), "launch_command": cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui", "server": server_connection_info(dict(item))})
+            if len(parts) == 4 and parts[3] == "game-status":
+                with DB_LOCK, connect_db() as db:
+                    game = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
+                    port_row = db.execute("SELECT port FROM server_ports WHERE server_id=?", (sid,)).fetchone()
+                if not game or game["game"] != "Minecraft" or not port_row:
+                    return self.json_response(200, {"ok": True, "supported": False, "online": False, "players": 0, "max_players": 0})
+                return self.json_response(200, {"ok": True, "supported": True, **minecraft_status(port_row["port"])})
             if len(parts) == 4 and parts[3] == "metrics": return self.json_response(200, {"ok": True, **process_metrics(sid)})
             if len(parts) == 4 and parts[3] == "console": return self.json_response(200, {"ok": True, **logs(sid)})
             if len(parts) == 4 and parts[3] == "backups":
