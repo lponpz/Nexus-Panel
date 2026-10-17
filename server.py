@@ -39,6 +39,15 @@ def init_db():
         CREATE TABLE IF NOT EXISTS connectors (id TEXT PRIMARY KEY, panel_type TEXT NOT NULL, base_url TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'Saved - not tested', created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS activities (id INTEGER PRIMARY KEY AUTOINCREMENT, message TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'owner', created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS sessions (
+            token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, csrf_token TEXT NOT NULL,
+            expires_at TEXT NOT NULL, created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
         """)
         if not db.execute("SELECT COUNT(*) FROM activities").fetchone()[0]:
             db.execute("INSERT INTO activities(message,detail,created_at) VALUES(?,?,?)", ("Nexus initialized", "Local database created", now()))
@@ -50,6 +59,94 @@ def add_activity(message, detail):
 def server_exists(server_id):
     with DB_LOCK, connect_db() as db:
         return db.execute("SELECT 1 FROM servers WHERE id=?", (server_id,)).fetchone() is not None
+
+
+def password_hash(password, salt=None):
+    import hashlib, secrets
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 310000)
+    return salt.hex() + ":" + digest.hex()
+
+
+def password_matches(password, encoded):
+    import hashlib, hmac
+    try:
+        salt_hex, digest_hex = encoded.split(":", 1)
+        expected = bytes.fromhex(digest_hex)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), 310000)
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
+
+
+def _token_digest(token):
+    import hashlib
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def current_session(handler):
+    import secrets
+    cookie = handler.headers.get("Cookie", "")
+    token = ""
+    for item in cookie.split(";"):
+        key, sep, value = item.strip().partition("=")
+        if sep and key == "nexus_session":
+            token = value
+            break
+    if not token:
+        return None
+    with DB_LOCK, connect_db() as db:
+        row = db.execute(
+            "SELECT sessions.user_id,sessions.csrf_token,sessions.expires_at,users.username,users.role "
+            "FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token_hash=?",
+            (_token_digest(token),)
+        ).fetchone()
+        if not row or row["expires_at"] <= now():
+            if row:
+                db.execute("DELETE FROM sessions WHERE token_hash=?", (_token_digest(token),))
+            return None
+        return dict(row)
+
+
+def issue_session(handler, user_id):
+    import secrets
+    import hashlib
+    token = secrets.token_urlsafe(48)
+    csrf = secrets.token_urlsafe(32)
+    created = datetime.now(timezone.utc)
+    expires = (created.replace(microsecond=0) + __import__("datetime").timedelta(hours=12)).isoformat()
+    with DB_LOCK, connect_db() as db:
+        db.execute("INSERT INTO sessions(token_hash,user_id,csrf_token,expires_at,created_at) VALUES(?,?,?,?,?)",
+                   (_token_digest(token), user_id, csrf, expires, now()))
+    secure = "; Secure" if os.environ.get("NEXUS_COOKIE_SECURE") == "1" else ""
+    handler.send_header("Set-Cookie", "nexus_session=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200" + secure)
+    return csrf
+
+
+def clear_session_cookie(handler):
+    secure = "; Secure" if os.environ.get("NEXUS_COOKIE_SECURE") == "1" else ""
+    handler.send_header("Set-Cookie", "nexus_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" + secure)
+
+
+def configured():
+    with DB_LOCK, connect_db() as db:
+        row = db.execute("SELECT value FROM settings WHERE key='setup_complete'").fetchone()
+        return bool(row and row["value"] == "true")
+
+
+def has_owner():
+    with DB_LOCK, connect_db() as db:
+        return db.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
+
+
+def valid_origin(handler):
+    origin = handler.headers.get("Origin")
+    if origin:
+        from urllib.parse import urlparse as _urlparse
+        return _urlparse(origin).netloc == handler.headers.get("Host", "")
+    fetch_site = handler.headers.get("Sec-Fetch-Site", "")
+    return fetch_site not in ("cross-site", "same-site")
+
 
 def valid_url(value):
     from urllib.parse import urlparse as parse
@@ -70,13 +167,38 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Referrer-Policy", "same-origin")
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
-    def json_response(self, code, payload):
+    def json_response(self, code, payload, extra_headers=None):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        for key, value in (extra_headers or []):
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
+    def auth_error(self, code, message):
+        return self.json_response(code, {"ok": False, "error": message})
+    def api_authenticated(self):
+        path = urlparse(self.path).path
+        public = {"/api/health", "/api/setup", "/api/auth/login", "/api/auth/session"}
+        if path in public:
+            return True
+        if not configured():
+            return True
+        session = current_session(self)
+        if not session:
+            self.auth_error(401, "Login required. Open login.html and sign in.")
+            return False
+        if self.command in ("POST", "PUT", "PATCH", "DELETE"):
+            if not valid_origin(self):
+                self.auth_error(403, "Request origin rejected.")
+                return False
+            supplied = self.headers.get("X-Nexus-CSRF", "")
+            import hmac
+            if not supplied or not hmac.compare_digest(supplied, session["csrf_token"]):
+                self.auth_error(403, "Security token missing or expired. Reload the page and try again.")
+                return False
+        return True
     def read_json(self, limit=16384):
         if urlparse(self.path).path.endswith("/files"):
             limit = 1100000
@@ -89,6 +211,24 @@ class Handler(SimpleHTTPRequestHandler):
         return data
     def do_GET(self):
         path = urlparse(self.path).path
+        if path in ("/", "/index.html") and configured() and not current_session(self):
+            self.send_response(302); self.send_header("Location", "/login.html"); self.end_headers(); return
+        if path == "/api/auth/session":
+            session = current_session(self)
+            if not session:
+                return self.json_response(200, {"ok": True, "authenticated": False})
+            return self.json_response(200, {"ok": True, "authenticated": True, "username": session["username"], "role": session["role"], "csrf_token": session["csrf_token"]})
+        if path == "/api/auth/logout":
+            session = current_session(self)
+            if session:
+                cookie = self.headers.get("Cookie", "")
+                token = next((v.strip().split("=",1)[1] for v in cookie.split(";") if v.strip().startswith("nexus_session=")), "")
+                if token:
+                    with DB_LOCK, connect_db() as db:
+                        db.execute("DELETE FROM sessions WHERE token_hash=?", (_token_digest(token),))
+            return self.json_response(200, {"ok": True, "authenticated": False}, [("Set-Cookie", "nexus_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")])
+        if path.startswith("/api/") and not self.api_authenticated():
+            return
         if path == "/api/health":
             return self.json_response(200, {"ok": True, "app": "Nexus Panel", "mode": "local-dev", "database": "sqlite", "timestamp": now()})
         if path == "/api/setup":
@@ -129,6 +269,36 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/api/auth/login":
+            if not valid_origin(self):
+                return self.auth_error(403, "Request origin rejected.")
+            try:
+                data = self.read_json()
+            except ValueError as exc:
+                return self.auth_error(400, str(exc))
+            username = str(data.get("username", "")).strip()
+            password = data.get("password", "")
+            if not isinstance(password, str) or len(username) > 80 or len(password) > 1024:
+                return self.auth_error(400, "Invalid username or password.")
+            with DB_LOCK, connect_db() as db:
+                user = db.execute("SELECT id,password_hash FROM users WHERE username=?", (username,)).fetchone()
+            if not user or not password_matches(password, user["password_hash"]):
+                return self.auth_error(401, "Incorrect username or password.")
+            headers = []
+            # Issue the cookie on the same response that reports a successful login.
+            import secrets
+            token = secrets.token_urlsafe(48); csrf = secrets.token_urlsafe(32)
+            created = datetime.now(timezone.utc)
+            expires = (created.replace(microsecond=0) + __import__("datetime").timedelta(hours=12)).isoformat()
+            with DB_LOCK, connect_db() as db:
+                db.execute("INSERT INTO sessions(token_hash,user_id,csrf_token,expires_at,created_at) VALUES(?,?,?,?,?)",
+                           (_token_digest(token), user["id"], csrf, expires, now()))
+            secure = "; Secure" if os.environ.get("NEXUS_COOKIE_SECURE") == "1" else ""
+            headers.append(("Set-Cookie", "nexus_session=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200" + secure))
+            add_activity("Owner login", username)
+            return self.json_response(200, {"ok": True, "authenticated": True, "csrf_token": csrf}, headers)
+        if path.startswith("/api/") and not self.api_authenticated():
+            return
         if path.startswith("/api/servers/") and path.endswith("/file-upload"):
             parts = path.strip("/").split("/")
             if len(parts) != 4 or not server_exists(parts[2]): return self.json_response(404, {"ok": False, "error": "Server not found"})
@@ -152,14 +322,26 @@ class Handler(SimpleHTTPRequestHandler):
         try: data = self.read_json()
         except ValueError as exc: return self.json_response(400, {"ok": False, "error": str(exc)})
         if path == "/api/setup":
+            if configured() or has_owner():
+                return self.auth_error(403, "Initial setup is already complete. Sign in instead.")
             name = str(data.get("workspace_name", "Nexus Workspace")).strip()
+            username = str(data.get("username", "")).strip()
+            password = data.get("password", "")
             if not name or len(name) > 60 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]*", name):
-                return self.json_response(400, {"ok": False, "error": "Workspace name must be 1-60 valid characters."})
+                return self.auth_error(400, "Workspace name must be 1-60 valid characters.")
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username):
+                return self.auth_error(400, "Owner username must be 3-32 letters, numbers, dots, underscores or hyphens.")
+            if not isinstance(password, str) or len(password) < 12 or len(password) > 1024:
+                return self.auth_error(400, "Owner password must be at least 12 characters.")
+            owner_id = str(uuid.uuid4())
             with DB_LOCK, connect_db() as db:
+                db.execute("INSERT INTO users(id,username,password_hash,role,created_at) VALUES(?,?,?,?,?)",
+                           (owner_id, username, password_hash(password), "owner", now()))
                 db.execute("INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES(?,?,?)", ("workspace_name", name, now()))
                 db.execute("INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES(?,?,?)", ("setup_complete", "true", now()))
-            add_activity("Nexus setup completed", name)
-            return self.json_response(200, {"ok": True, "configured": True, "workspace_name": name})
+            csrf = issue_session(self, owner_id)
+            add_activity("Nexus owner account created", username)
+            return self.json_response(200, {"ok": True, "configured": True, "workspace_name": name, "authenticated": True, "csrf_token": csrf})
         if path == "/api/servers":
             name, game, panel = str(data.get("name", "")).strip(), str(data.get("game", "")).strip(), str(data.get("panel", "Nexus (local)")).strip()
             status = str(data.get("status", "Configured")).strip()
@@ -208,6 +390,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json_response(201, {"ok": True, "item": item})
         return self.json_response(404, {"ok": False, "error": "API route not found"})
     def do_PUT(self):
+        if not self.api_authenticated():
+            return
         path = urlparse(self.path).path.rstrip("/")
         parts = path.split("/")
         if len(parts) != 4 or parts[1:3] != ["api", "servers"]: return self.json_response(404, {"ok": False, "error": "API route not found"})
@@ -224,6 +408,8 @@ class Handler(SimpleHTTPRequestHandler):
         add_activity("Server record updated", item["name"])
         return self.json_response(200, {"ok": True, "item": item})
     def do_DELETE(self):
+        if not self.api_authenticated():
+            return
         parts = urlparse(self.path).path.rstrip("/").split("/")
         if len(parts) != 4 or parts[1] != "api" or parts[2] not in ("servers", "connectors"): return self.json_response(404, {"ok": False, "error": "API route not found"})
         kind, item_id = parts[2], parts[3]; table = "servers" if kind == "servers" else "connectors"
