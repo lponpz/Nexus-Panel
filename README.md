@@ -20,12 +20,20 @@ Open the installer/dashboard URL printed by the launcher. If it does not open au
 
 Open the installer/dashboard URL printed by the launcher. If it does not open automatically, open the matching port in the Codespaces **Ports** tab. Keep that port **Private**.
 
+## Minecraft join addresses and port allocation
+
+- Each locally managed Minecraft server gets a unique TCP port from `NEXUS_MINECRAFT_PORT_START` to `NEXUS_MINECRAFT_PORT_END` (defaults to `25565–25664`), persisted in SQLite.
+- Nexus writes the assigned `server-port` and an empty `server-ip` into that server's `server.properties`, including again before start/restart. Server cards and the console show a copyable Java Edition join address.
+- Configure the public IP or DNS hostname in **Game Servers → Public Minecraft address**, or set `NEXUS_PUBLIC_HOST` in the environment. Without this, the UI intentionally labels `127.0.0.1:<port>` as local-only; it is not a public address.
+- A displayed address does not by itself make a server internet-accessible. The game process must be running and bound successfully, the host firewall must allow the allocated TCP port, any cloud firewall/security group must allow it, and a home router must forward the port if behind NAT. GitHub Codespaces is a development environment, not a public game-hosting node; do not expose the panel web port.
+- This local Java runtime does not yet provide production container isolation, quota enforcement, remote nodes, or runtime adapters for FiveM/Terraria. Do not advertise the current branch as production hosting.
+
 ## Currently implemented
 
 - First-run installer creates the workspace and first owner account; passwords are stored as salted PBKDF2-HMAC-SHA256 hashes.
 - Owner login with a 12-hour HttpOnly/SameSite session cookie, failed-login throttling, and CSRF tokens on API mutations.
 - API routes are blocked until setup; the dashboard redirects unauthenticated visitors to the login page.
-- Server record creation, editing and deletion.
+- Minecraft server record creation with persistent unique port allocation, copyable Java Edition join address, public-host configuration, and `server.properties` port synchronization; server record editing and deletion.
 - Per-server workspace folders.
 - Java-only process launch/stop/restart for a server JAR named `server.jar`.
 - One-click stable Paper server installer using PaperMC's current Fill API; it chooses a Java-compatible stable version, validates the artifact host and published SHA-256, checks size, and atomically installs `server.jar` without overwriting an existing JAR.
