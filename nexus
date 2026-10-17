@@ -13,9 +13,11 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ];
 fi
 is_nexus_running() {
   NEXUS_PORT="$1" python3 -c 'import os,urllib.request,sys
+base="http://127.0.0.1:"+os.environ["NEXUS_PORT"]
 try:
- r=urllib.request.urlopen("http://127.0.0.1:"+os.environ["NEXUS_PORT"]+"/api/health",timeout=1)
- sys.exit(0 if r.status==200 else 1)
+ health=urllib.request.urlopen(base+"/api/health",timeout=1)
+ setup=urllib.request.urlopen(base+"/api/setup",timeout=1)
+ sys.exit(0 if health.status==200 and setup.status==200 else 1)
 except Exception: sys.exit(1)'
 }
 port_is_open() {
@@ -34,6 +36,17 @@ else
     OLD_PID="$(cat /tmp/nexus-dashboard.pid 2>/dev/null || true)"
     if [ -n "$OLD_PID" ] && ps -p "$OLD_PID" -o args= 2>/dev/null | grep -Fq "http.server $PORT"; then
       echo "Stopping the old static preview on port $PORT..."
+      kill "$OLD_PID" 2>/dev/null || true
+      sleep 1
+    fi
+  fi
+  # Restart only the previous Nexus server process from this same repository if it lacks the installer API.
+  if [ -f /tmp/nexus-dashboard.pid ]; then
+    OLD_PID="$(cat /tmp/nexus-dashboard.pid 2>/dev/null || true)"
+    OLD_ARGS=""
+    if [ -n "$OLD_PID" ]; then OLD_ARGS="$(ps -p "$OLD_PID" -o args= 2>/dev/null || true)"; fi
+    if [ -n "$OLD_PID" ] && printf '%s' "$OLD_ARGS" | grep -Fq "$ROOT/server.py"; then
+      echo "Restarting the older Nexus backend to load the installer update..."
       kill "$OLD_PID" 2>/dev/null || true
       sleep 1
     fi
