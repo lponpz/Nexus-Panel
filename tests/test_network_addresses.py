@@ -78,7 +78,11 @@ class NetworkAddressTests(unittest.TestCase):
         self.assertEqual([x["id"] for x in listed["items"]],[created["item"]["id"]])
         status,_,forbidden=request("/api/customers",cookie=customer_cookie)
         self.assertEqual(status,403,forbidden)
-        status,_,other=request("/api/servers/not-their-server",cookie=customer_cookie)
+        status,_,second=request("/api/customers","POST",{"username":"customer-two","password":"customer-two-initial-password"},self.cookie,self.csrf)
+        self.assertEqual(status,201,second)
+        status,headers2,login2=request("/api/auth/login","POST",{"username":"customer-two","password":"customer-two-initial-password"})
+        self.assertEqual(status,200,login2)
+        status,_,other=request("/api/servers/"+created["item"]["id"],cookie=headers2.get("Set-Cookie"))
         self.assertEqual(status,404,other)
 
     def test_other_games_do_not_claim_minecraft_port(self):
