@@ -379,7 +379,7 @@ def install_modrinth_plugin(directory, query, game_version=None):
                   and isinstance(v.get("files"), list) and v["files"]]
     if not compatible:
         raise ValueError("No stable version of " + str(project.get("title", project["slug"])) +
-                         " supports Minecraft " + game_version + " on Paper.")
+                         " supports Minecraft " + game_version + " on Fabric.")
     selected = compatible[0]
     files = [f for f in selected["files"] if isinstance(f, dict)]
     file_info = next((f for f in files if f.get("primary") is True), files[0] if files else None)
