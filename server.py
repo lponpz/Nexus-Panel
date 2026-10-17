@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nexus Panel local development backend. Keep private; production auth is not yet implemented."""
+"""Nexus Panel development backend with owner authentication; node isolation is not production-ready."""
 from __future__ import annotations
 import json, os, re, sqlite3, threading, uuid, time
 from datetime import datetime, timezone
