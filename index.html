@@ -95,5 +95,20 @@
   <div class="security-note"><span>ⓘ</span><div><strong>Local record only</strong><small>Status here is a saved label, not verified runtime status.</small></div></div>
   <button type="submit" class="button primary submit">Save changes <span>→</span></button>
 </form></dialog>
+<dialog id="consoleDialog" class="modal wide-modal"><div class="console-shell">
+  <div class="modal-top"><div><h2 id="consoleTitle">Server Console</h2><p class="modal-desc">Live process output and game commands</p></div><button type="button" class="icon" id="closeConsoleDialog" aria-label="Close dialog">×</button></div>
+  <div class="console-toolbar"><span id="runtimeState" class="server-status stopped"><i></i>Stopped</span><button type="button" class="button secondary" id="consoleStart">Start</button><button type="button" class="button danger" id="consoleStop">Stop</button><button type="button" class="button secondary" id="consoleRefresh">Refresh logs</button></div>
+  <pre id="consoleOutput" class="terminal-output" aria-live="polite">Select a server to load console output.</pre>
+  <form id="consoleCommandForm" class="terminal-command"><span>›</span><input id="consoleCommand" autocomplete="off" placeholder="Enter game console command…" maxlength="1000" required><button class="button primary" type="submit">Send</button></form>
+  <details class="launch-config"><summary>Launch command settings</summary><p>Java only. The JAR must be named server.jar and placed in this server's folder.</p><form id="launchConfigForm"><input id="launchCommand" value="java -Xms1G -Xmx2G -jar server.jar nogui" maxlength="500" required><button class="button secondary" type="submit">Save command</button></form></details>
+  <p class="runtime-warning">Runs processes on the machine hosting Nexus. Keep the Codespaces port private; this development panel has no login system yet.</p>
+</div></dialog>
+<dialog id="filesDialog" class="modal wide-modal"><div class="files-shell">
+  <div class="modal-top"><div><h2 id="filesTitle">Server Files</h2><p class="modal-desc">Files are isolated to this server's workspace folder</p></div><button type="button" class="icon" id="closeFilesDialog" aria-label="Close dialog">×</button></div>
+  <div class="file-toolbar"><span id="filePathLabel">/</span><button type="button" class="button secondary" id="fileUp">↑ Up</button><button type="button" class="button secondary" id="fileNewFolder">＋ Folder</button><button type="button" class="button secondary" id="fileNewText">＋ Text file</button><button type="button" class="button secondary" id="fileRefresh">Refresh</button></div>
+  <div id="fileList" class="file-list"></div>
+  <section id="fileEditor" class="file-editor" hidden><label for="fileEditorContent" id="fileEditorLabel">Edit text file</label><textarea id="fileEditorContent" rows="12" spellcheck="false"></textarea><div class="file-editor-actions"><button type="button" class="button secondary" id="fileCancelEdit">Cancel</button><button type="button" class="button primary" id="fileSaveEdit">Save file</button></div></section>
+  <p class="runtime-warning">This basic file manager supports browsing, folders, and editing text files. Binary upload/download and archive extraction are not implemented yet.</p>
+</div></dialog>
 <script src="app.js"></script>
 </body></html>
