@@ -250,6 +250,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/setup":
             with DB_LOCK, connect_db() as db: rows = {r["key"]: r["value"] for r in db.execute("SELECT key,value FROM settings")}
             return self.json_response(200, {"ok": True, "configured": rows.get("setup_complete") == "true", "workspace_name": rows.get("workspace_name", "Nexus Workspace")})
+        if path == "/api/host-metrics":
+            from runtime_manager import host_metrics
+            return self.json_response(200, {"ok": True, **host_metrics(DATA_DIR)})
         if path == "/api/overview":
             with DB_LOCK, connect_db() as db:
                 servers = db.execute("SELECT COUNT(*) FROM servers").fetchone()[0]
@@ -266,10 +269,11 @@ class Handler(SimpleHTTPRequestHandler):
             parts = path.strip("/").split("/")
             if len(parts) < 3 or not server_exists(parts[2]): return self.json_response(404, {"ok": False, "error": "Server not found"})
             sid = parts[2]
-            from runtime_manager import snapshot, logs, list_files, server_path
+            from runtime_manager import snapshot, logs, list_files, server_path, process_metrics
             if len(parts) == 3:
                 with DB_LOCK, connect_db() as db: cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
                 return self.json_response(200, {"ok": True, "runtime": snapshot(sid), "launch_command": cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui"})
+            if len(parts) == 4 and parts[3] == "metrics": return self.json_response(200, {"ok": True, **process_metrics(sid)})
             if len(parts) == 4 and parts[3] == "console": return self.json_response(200, {"ok": True, **logs(sid)})
             if len(parts) == 4 and parts[3] == "backups":
                 with DB_LOCK, connect_db() as db:
