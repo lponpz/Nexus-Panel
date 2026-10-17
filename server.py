@@ -560,7 +560,7 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
     def do_POST(self):
         path = urlparse(self.path).path
-        if path.startswith("/api/") and path != "/api/auth/logout" and not path.startswith("/api/servers/"):
+        if path.startswith("/api/") and path not in ("/api/auth/login", "/api/auth/logout", "/api/setup") and not path.startswith("/api/servers/"):
             if not self.api_authenticated(): return
             if not owner_only(self): return
         if path == "/api/auth/logout":
