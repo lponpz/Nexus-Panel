@@ -1,6 +1,6 @@
 # Nexus Panel — Master Roadmap
 
-A planned feature is not complete until implemented, tested, and documented. The current branch has a real local Java runtime, owner authentication, per-server console/files, verified Paper installation, and CI checks. It is still not a production multi-node hosting panel.
+A planned feature is not complete until implemented, tested, and documented. The current branch has a persistent local node agent, a real local Java runtime, owner authentication, per-server console/files, Paper/Fabric installers, and CI checks. It is still not a production multi-node hosting panel. It is still not a production multi-node hosting panel.
 
 ## Phase 1 — Foundation (partially implemented)
 - [x] Blue Neon responsive dashboard shell and mobile navigation.
@@ -12,8 +12,9 @@ A planned feature is not complete until implemented, tested, and documented. The
 - [x] Modrinth Paper plugin installer: auto-select latest stable compatible version and verify the artifact checksum before atomic install.
 - [x] Automated authentication/Paper installer tests and GitHub Actions checks.
 - [ ] Production web framework and hardened deployment architecture.
-- [ ] Multi-user tenant model, per-server authorization and customer/reseller accounts.
-- [ ] Real remote node agent with isolated execution and resource limits.
+- [x] Customer accounts, per-server authorization, customer portal, and owner-only administrative APIs.
+- [x] Local loopback-only node agent with token authentication; game processes survive web panel restarts.
+- [ ] Remote node pairing, container isolation, enforced CPU/RAM/disk/PID limits, and production deployment hardening.
 - [ ] First live external panel adapter with encrypted credentials and contract tests.
 
 ## Universal multi-panel platform
