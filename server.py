@@ -269,6 +269,16 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/api/auth/logout":
+            if not self.api_authenticated():
+                return
+            cookie = self.headers.get("Cookie", "")
+            token = next((v.strip().split("=",1)[1] for v in cookie.split(";") if v.strip().startswith("nexus_session=")), "")
+            if token:
+                with DB_LOCK, connect_db() as db:
+                    db.execute("DELETE FROM sessions WHERE token_hash=?", (_token_digest(token),))
+            secure = "; Secure" if os.environ.get("NEXUS_COOKIE_SECURE") == "1" else ""
+            return self.json_response(200, {"ok": True, "authenticated": False}, [("Set-Cookie", "nexus_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" + secure)])
         if path == "/api/auth/login":
             if not valid_origin(self):
                 return self.auth_error(403, "Request origin rejected.")
@@ -339,9 +349,18 @@ class Handler(SimpleHTTPRequestHandler):
                            (owner_id, username, password_hash(password), "owner", now()))
                 db.execute("INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES(?,?,?)", ("workspace_name", name, now()))
                 db.execute("INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES(?,?,?)", ("setup_complete", "true", now()))
-            csrf = issue_session(self, owner_id)
+            import secrets
+            token = secrets.token_urlsafe(48)
+            csrf = secrets.token_urlsafe(32)
+            created = datetime.now(timezone.utc)
+            expires = (created.replace(microsecond=0) + __import__("datetime").timedelta(hours=12)).isoformat()
+            with DB_LOCK, connect_db() as db:
+                db.execute("INSERT INTO sessions(token_hash,user_id,csrf_token,expires_at,created_at) VALUES(?,?,?,?,?)",
+                           (_token_digest(token), owner_id, csrf, expires, now()))
+            secure = "; Secure" if os.environ.get("NEXUS_COOKIE_SECURE") == "1" else ""
+            headers = [("Set-Cookie", "nexus_session=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200" + secure)]
             add_activity("Nexus owner account created", username)
-            return self.json_response(200, {"ok": True, "configured": True, "workspace_name": name, "authenticated": True, "csrf_token": csrf})
+            return self.json_response(200, {"ok": True, "configured": True, "workspace_name": name, "authenticated": True, "csrf_token": csrf}, headers)
         if path == "/api/servers":
             name, game, panel = str(data.get("name", "")).strip(), str(data.get("game", "")).strip(), str(data.get("panel", "Nexus (local)")).strip()
             status = str(data.get("status", "Configured")).strip()
