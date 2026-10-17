@@ -1,16 +1,22 @@
 # Nexus Panel — Master Roadmap
 
-All features below are planned unless explicitly shown in the Phase 1 prototype. The dashboard currently uses demo data and has no live panel API integration.
+A planned feature is not complete until implemented, tested, and documented. The current branch has a persistent local node agent, a real local Java runtime, owner authentication, per-server console/files, Paper/Fabric installers, and CI checks. It is still not a production multi-node hosting panel. It is still not a production multi-node hosting panel.
 
-## Phase 1 — Foundation
+## Phase 1 — Foundation (partially implemented)
 - [x] Blue Neon responsive dashboard shell and mobile navigation.
-- [x] Sample overview cards, connector list, activity feed, server table and quick actions.
-- [x] UI-only connector setup dialog and basic client-side search.
-- [x] Universal adapter architecture and roadmap documentation.
-- [ ] Select and scaffold production framework.
-- [ ] Define authentication, typed API, database schema and tenant model.
-- [ ] Implement connector registry and first real adapter with contract tests.
-- [ ] Add automated checks and CI.
+- [x] SQLite-backed server/connector records and activity feed.
+- [x] First-run owner bootstrap, password hashing, expiring sessions, login throttling and CSRF-protected mutations.
+- [x] Per-server local Java process start/stop/restart, console commands/logs, file CRUD, upload and download.
+- [x] Minecraft Player Manager: live online player list, kick/ban/unban, operator and whitelist actions, gamemode changes, and live online inventory inspection.
+- [x] One-click stable Paper installer with published SHA-256 verification and explicit EULA confirmation.
+- [x] Official Fabric server launcher selection based on installed Java compatibility, plus compatible Modrinth Fabric mod installation with SHA-512/SHA-1 verification.
+- [x] Modrinth Paper plugin installer: auto-select latest stable compatible version and verify the artifact checksum before atomic install.
+- [x] Automated authentication/Paper installer tests and GitHub Actions checks.
+- [ ] Production web framework and hardened deployment architecture.
+- [x] Customer accounts, per-server authorization, customer portal, and owner-only administrative APIs.
+- [x] Local loopback-only node agent with token authentication; game processes survive web panel restarts.
+- [ ] Remote node pairing, container isolation, enforced CPU/RAM/disk/PID limits, and production deployment hardening.
+- [ ] First live external panel adapter with encrypted credentials and contract tests.
 
 ## Universal multi-panel platform
 - Unified server dashboard across supported panels.
@@ -27,6 +33,20 @@ All features below are planned unless explicitly shown in the Phase 1 prototype.
 - Personal dashboard studio with custom widgets, saved views and quick actions.
 - White-label brands: logo, favicon, colors, login/loading screens, domains, emails/invoices, store/support links and multiple brand profiles.
 - Localization and language packs, locale/timezone, dates, numbers and currency display.
+
+## Selected Nexus features (user-approved scope)
+- [x] Automatic Backup Scheduler (local storage, configurable interval, 20-backup retention).
+- [ ] Mod Compatibility Checker.
+- [x] Hosting Plan Builder (owner CRUD for enabled/disabled plans, currency/interval and resource limits; automated billing integration remains pending).
+- [ ] Nexus Plugin Marketplace.
+- [ ] Expiry Grace Dashboard.
+- [ ] Free Server Queue.
+- [ ] Server Templates.
+- [x] Live Performance Dashboard (local host/process metrics; container quotas remain pending).
+- [ ] Role Permission Builder.
+- [x] One-Click Restore (checksum-verified backup, pre-restore safety snapshot).
+
+These remain planned until the relevant storage, scheduler, node, permission, and recovery backends are implemented and tested.
 
 ## Admin Control Center
 - Searchable global settings registry.

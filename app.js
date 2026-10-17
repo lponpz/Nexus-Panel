@@ -5,13 +5,13 @@ const pages = {
   "Overview":["Your hosting, <span>in one place.</span>","A unified command center for your saved game hosting records."],
   "Game Servers":["Every server, <span>one view.</span>","Open a server console, run game commands, upload files and edit its saved settings."],
   "Panel Connectors":["Connect your <span>hosting world.</span>","Review saved endpoints. Live authentication and external panel control still require adapters."],
-  "Nodes & Capacity":["Capacity without <span>guesswork.</span>","Node telemetry appears here once a real node agent is implemented."],
-  "Backups & Recovery":["Recovery you can <span>trust.</span>","Backup policies and restore operations need a configured storage provider."],
-  "Store & Billing":["Your hosting <span>business center.</span>","Plans, invoices and payments will appear here when billing is implemented."],
-  "Customers & Resellers":["Every tenant, <span>properly separated.</span>","Customer accounts and role-based tenant access are not implemented yet."],
+  "Nodes & Capacity":["Capacity without <span>guesswork.</span>","Live host metrics are available; isolated remote node agents and enforced quotas remain in development."],
+  "Backups & Recovery":["Recovery you can <span>trust.</span>","Review local snapshots, schedule backups and restore a verified backup with a safety copy."],
+  "Store & Billing":["Your hosting <span>business center.</span>","Manage hosting plans, create invoices and record verified offline payments."],
+  "Customers & Resellers":["Every tenant, <span>properly separated.</span>","Create customer accounts, assign servers, reset passwords and control account access."],
   "Automation & AI":["Less repetition. <span>More control.</span>","Create safe workflows here in a later phase; no background jobs run yet."],
   "Extensions":["Make Nexus <span>your own.</span>","Manage add-ons here when the extension system is available."],
-  "Security & Audit":["Security with <span>visibility.</span>","Review locally recorded changes. Owner login and permissions still need implementation."],
+  "Security & Audit":["Security with <span>visibility.</span>","Review recorded changes, customer access and owner session controls."],
   "Settings":["Tune your <span>workspace.</span>","Workspace and integration settings."]
 };
 let currentPage = "Overview";
@@ -20,8 +20,17 @@ let cachedConnectors = [];
 function closeMenu(){ $("#sidebar").classList.remove("open"); $("#scrim").classList.remove("show"); }
 function openMenu(){ $("#sidebar").classList.add("open"); $("#scrim").classList.add("show"); }
 async function api(path, options = {}) {
-  const response = await fetch(path, {headers: {"Content-Type":"application/json"}, ...options});
+  const method = String(options.method || "GET").toUpperCase();
+  const headers = {"Content-Type":"application/json", ...(options.headers || {})};
+  if (["POST","PUT","PATCH","DELETE"].includes(method) && path !== "/api/setup" && path !== "/api/auth/login") {
+    const sessionResponse = await fetch("/api/auth/session", {credentials:"same-origin"});
+    const session = await sessionResponse.json().catch(() => ({}));
+    if (!session.authenticated) { location.replace("/login.html"); throw new Error("Please sign in again."); }
+    headers["X-Nexus-CSRF"] = session.csrf_token;
+  }
+  const response = await fetch(path, {...options, credentials:"same-origin", headers});
   const data = await response.json().catch(() => ({ok:false,error:"Server returned an invalid response"}));
+  if (response.status === 401) { location.replace("/login.html"); throw new Error("Login required."); }
   if (!response.ok || data.ok === false) throw new Error(data.error || ("Request failed: " + response.status));
   return data;
 }
@@ -33,11 +42,35 @@ function renderServers(items) {
   cachedServers = items;
   const tbody = $("#serverRows");
   if (tbody) tbody.innerHTML = !items.length ? '<tr><td colspan="6" class="empty-state">No server records yet. Use “Add server” to create one.</td></tr>' :
-    items.map(item => '<tr data-search="' + esc([item.name,item.game,item.panel].join(" ").toLowerCase()) + '">' +
+    items.map(item => '<tr data-search="' + esc([item.name,item.game,item.panel,item.connect_address].join(" ").toLowerCase()) + '">' +
       '<td><div class="server-name"><span class="game ' + gameClass(item.game) + '">' + gameLetter(item.game) + '</span><div><strong>' + esc(item.name) + '</strong><small>' + esc(item.id.slice(0,8)) + '</small></div></div></td>' +
       '<td>' + esc(item.game) + '</td><td><span class="tag">' + esc(item.panel) + '</span></td>' +
-      '<td><span class="server-status ' + statusClass(item.status) + '"><i></i>' + esc(item.status) + '</span></td>' +
-      '<td><span>Not connected</span></td><td><button class="record-manage" data-manage-server="' + esc(item.id) + '">Manage</button></td></tr>').join("");
+      '<td>' + (item.game === "Minecraft" && item.connect_port ? '<span class="server-status configured" data-game-ping="' + esc(item.id) + '"><i></i><span data-ping-label>Checking…</span></span>' : '<span class="server-status ' + statusClass(item.status) + '"><i></i>' + esc(item.status) + '</span>') + '</td>' +
+      '<td>' + (item.connect_address ? '<button class="address-copy" data-copy-address="' + esc(item.connect_address) + '">' + esc(item.connect_address) + '</button><small class="address-hint">' + (item.public_address_configured ? 'Public address set' : 'Local only · configure public IP') + '</small>' : '<span>Address unavailable for this adapter</span>') + '</td><td><button class="record-manage" data-manage-server="' + esc(item.id) + '">Manage</button></td></tr>').join("");
+}
+async function refreshMinecraftStatuses(items) {
+  await Promise.all(items.filter(item => item.game === "Minecraft" && item.connect_port).map(async item => {
+    const badges = $$('[data-game-ping="' + CSS.escape(item.id) + '"]');
+    try {
+      const response = await fetch("/api/servers/" + encodeURIComponent(item.id) + "/game-status", {credentials:"same-origin"});
+      const data = await response.json();
+      for (const badge of badges) {
+        const label = badge.querySelector("[data-ping-label]");
+        if (!label) continue;
+        if (data.online) {
+          label.textContent = "Online · " + data.players + "/" + data.max_players;
+          badge.className = "server-status configured";
+          badge.title = (data.version || "Minecraft") + (data.motd ? " — " + data.motd : "");
+        } else {
+          label.textContent = "Offline";
+          badge.className = "server-status stopped";
+          badge.title = "No Java Edition status response on the allocated local port.";
+        }
+      }
+    } catch (_) {
+      for (const badge of badges) { const label=badge.querySelector("[data-ping-label]"); if(label) label.textContent="Status unavailable"; }
+    }
+  }));
 }
 function renderConnectors(items) {
   cachedConnectors = items;
@@ -63,25 +96,195 @@ function renderPageWorkspace(page) {
   root.hidden = false;
   if (page === "Game Servers") {
     root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Your game servers</h2><p>Use Console and File Manager for each server. Java runtime currently supports Java server JARs.</p></div><button class="button primary" id="workspaceAddServer">＋ Add server</button></div>' +
-      (cachedServers.length ? '<div class="managed-server-grid">' + cachedServers.map(item => '<article class="managed-server"><div class="managed-server-top"><span class="game ' + gameClass(item.game) + '">' + gameLetter(item.game) + '</span><span class="server-status ' + statusClass(item.status) + '"><i></i>' + esc(item.status) + '</span></div><h3>' + esc(item.name) + '</h3><p>' + esc(item.game) + ' · ' + esc(item.panel) + '</p><div class="managed-server-id">ID · ' + esc(item.id) + '</div><div class="managed-server-actions"><button class="button secondary" data-manage-server="' + esc(item.id) + '">Manage server</button><button class="button danger" data-delete-server="' + esc(item.id) + '">Delete</button></div><small class="runtime-note">Java runtime · server.jar required</small></article>').join("") + '</div>' : '<div class="empty-panel"><span>▣</span><h3>No servers yet</h3><p>Create your first server record to see it here.</p><button class="button primary" id="workspaceAddServer">＋ Create server</button></div>') + '</section>' +
+      '<section class="network-address-panel"><div><h3>Public Minecraft address</h3><p>Set the public IP or DNS name of the machine that runs these game servers.</p></div><form id="publicHostForm" class="public-host-form"><input id="publicHostInput" maxlength="253" placeholder="e.g. 203.0.113.10 or mc.example.com" aria-label="Public IP or hostname"><button class="button secondary" type="submit">Save address</button></form><small id="publicHostStatus">Loading network settings…</small></section>' +
+      (cachedServers.length ? '<div class="managed-server-grid">' + cachedServers.map(item => '<article class="managed-server"><div class="managed-server-top"><span class="game ' + gameClass(item.game) + '">' + gameLetter(item.game) + '</span><span class="server-status ' + statusClass(item.status) + '"><i></i>' + esc(item.status) + '</span></div><h3>' + esc(item.name) + '</h3><p>' + esc(item.game) + ' · ' + esc(item.panel) + '</p>' + (item.connect_address ? '<div class="server-address-card"><small>JOIN ADDRESS · ' + esc(item.connection_type || 'Game') + '</small><strong>' + esc(item.connect_address) + '</strong><button class="button secondary" data-copy-address="' + esc(item.connect_address) + '">Copy IP</button><small>' + (item.public_address_configured ? 'Public address configured' : 'LOCAL ONLY — set your public IP above') + '</small></div>' : '') + '<div class="managed-server-id">ID · ' + esc(item.id) + '</div><div class="managed-server-actions"><button class="button secondary" data-manage-server="' + esc(item.id) + '">Manage server</button><button class="button danger" data-delete-server="' + esc(item.id) + '">Delete</button></div><small class="runtime-note">' + (item.game === 'Minecraft' && item.connect_port ? 'Java Edition · TCP port ' + esc(item.connect_port) + ' · Paper installer available' : 'Runtime adapter needed for this game') + '</small></article>').join("") + '</div>' : '<div class="empty-panel"><span>▣</span><h3>No servers yet</h3><p>Create your first Minecraft server and Nexus will reserve a unique game port.</p><button class="button primary" id="workspaceAddServer">＋ Create server</button></div>') + '</section>' +
+      '<div class="notice-panel"><strong>Joinability:</strong> each locally managed Minecraft server receives a unique TCP port. Install Paper, accept the EULA, start it, set the public IP/domain above, and allow that port through the host/cloud firewall and router. A displayed IP alone cannot bypass network restrictions. FiveM/Terraria runtimes are not enabled yet.</div>' +
       '<div class="notice-panel"><strong>Important:</strong> Nexus can launch a local Java server process, show console output, send game commands, and manage files after you upload server.jar. Remote node agents, resource telemetry, and production multi-user security still need implementation.</div>';
+    loadNetworkAddress(root);
   } else if (page === "Panel Connectors") {
     root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Panel connections</h2><p>Stored endpoints, not yet authenticated.</p></div><button class="button primary" id="workspaceConnect">＋ Add connector</button></div><div class="workspace-connector-list">' +
       (cachedConnectors.length ? cachedConnectors.map(item => '<div class="workspace-connector"><div><strong>' + esc(item.panel_type) + '</strong><p>' + esc(item.base_url) + '</p><small>' + esc(item.status) + '</small></div><button class="button danger" data-delete-connector="' + esc(item.id) + '">Remove</button></div>').join("") : '<div class="empty-panel"><h3>No panel connections</h3><p>Add a Pterodactyl, Pelican or AMP endpoint.</p></div>') + '</div></section><div class="notice-panel">For safety, Nexus currently stores only the URL. It does not store API keys or send commands to external panels.</div>';
+  } else if (page === "Backups & Recovery") {
+    root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Backups & recovery</h2><p>Verified local snapshots, automatic schedules and safe restore workflows for your servers.</p></div><button class="button secondary" id="refreshGlobalBackups">↻ Refresh</button></div><div id="globalBackups" class="managed-server-grid"><article class="managed-server"><h3>Loading backups…</h3></article></div><div class="notice-panel">Restoring requires the target server to be stopped. Nexus creates a safety backup before replacing server files. Backups are local to this host; configure off-host storage before relying on them for disaster recovery.</div></section>';
+    loadBackupsWorkspace(root);
+  } else if (page === "Store & Billing") {
+    root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Hosting plans</h2><p>Create real plan records with monthly/yearly pricing and resource limits.</p></div></div><form id="billingPlanForm" class="billing-form"><label>Plan name<input name="name" maxlength="80" required placeholder="Starter"></label><label>Description<input name="description" maxlength="500" placeholder="For small communities"></label><div class="billing-fields"><label>Currency<select name="currency"><option>PKR</option><option>USD</option><option>INR</option></select></label><label>Price (whole currency units)<input name="price" type="number" min="0" max="1000000" value="500" required></label><label>Interval<select name="interval"><option value="month">Monthly</option><option value="year">Yearly</option></select></label><label>RAM (MB)<input name="ram" type="number" min="256" max="1048576" value="2048" required></label><label>CPU allocation (%)<input name="cpu" type="number" min="10" max="6400" value="100" required></label><label>Disk (MB)<input name="disk" type="number" min="512" max="1048576" value="10240" required></label><label>Server limit<input name="limit" type="number" min="1" max="100" value="1" required></label></div><button class="button primary" type="submit">Create hosting plan</button></form><div id="billingPlanList" class="billing-list">Loading plans…</div></section><section class="card workspace-card"><div class="section-heading"><div><h2>Invoices</h2><p>Create invoices against enabled plans and record offline payments.</p></div></div><form id="billingInvoiceForm" class="billing-form"><label>Plan<select name="plan_id" id="billingInvoicePlan" required><option value="">Loading plans…</option></select></label><label>Link customer account (optional)<select name="customer_user_id" id="billingInvoiceCustomer"><option value="">Manual customer</option></select></label><label>Customer name<input name="customer_name" id="billingInvoiceName" maxlength="120" placeholder="Required for manual customers"></label><label>Customer email<input name="customer_email" id="billingInvoiceEmail" type="email" maxlength="254" placeholder="Required for manual customers"></label><button class="button primary" type="submit">Create invoice</button></form><div id="billingInvoiceList" class="billing-list">Loading invoices…</div><div class="notice-panel"><strong>Payment safety:</strong> this version tracks invoices and manual payment references only. It does not accept online payments or automatically provision servers after payment. A verified payment gateway and customer account system are still required.</div></section>';
+    loadBillingWorkspace(root);
+  } else if (page === "Customers & Resellers") {
+    root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Customer accounts</h2><p>Create customer logins and give them access only to assigned servers.</p></div></div><form id="customerCreateForm" class="billing-form"><label>Username<input name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]{3,32}" required placeholder="customer_01"></label><label>Initial password<input name="password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required placeholder="At least 12 characters"></label><label>Email (optional)<input name="email" type="email" maxlength="254" placeholder="customer@example.com"></label><button class="button primary" type="submit">Create customer account</button><p class="muted">Share the initial password with the customer securely. Email delivery and self-service password reset are not enabled yet.</p></form><div id="customerStatus" class="notice-panel" hidden></div><div id="customerList" class="billing-list">Loading customers…</div></section><section class="card workspace-card"><div class="section-heading"><div><h2>Assign a server</h2><p>Only assigned customers can view or control that server.</p></div></div><form id="customerAssignForm" class="billing-form"><label>Server<select name="server_id" id="assignServer" required><option value="">Loading servers…</option></select></label><label>Customer<select name="customer_id" id="assignCustomer" required><option value="">Loading customers…</option></select></label><button class="button primary" type="submit">Assign server</button></form></section>';
+    loadCustomersWorkspace(root);
   } else {
+    if (page === "Nodes & Capacity") {
+      root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Local host capacity</h2><p>Live operating-system metrics for the machine running this Nexus instance.</p></div><button class="button secondary" id="refreshHostMetrics">↻ Refresh metrics</button></div><div class="managed-server-grid" data-host-metrics><article class="managed-server"><h3>Loading telemetry…</h3><p>Reading CPU, memory and disk statistics.</p></article></div><div class="notice-panel">These are host-level readings, not per-container quotas. Remote nodes, container isolation and enforced resource limits are not implemented yet.</div></section>';
+      const loadHostMetrics = async () => {
+        const target = root.querySelector("[data-host-metrics]");
+        try {
+          const m = await api("/api/host-metrics");
+          const memoryUsed = m.memory_total_mb == null || m.memory_available_mb == null ? null : Math.max(0, m.memory_total_mb - m.memory_available_mb);
+          target.innerHTML = [
+            ["CPU cores", String(m.cpu_count), "1-minute load: " + (m.load_1m == null ? "Unavailable" : m.load_1m)],
+            ["Memory used", memoryUsed == null ? "Unavailable" : memoryUsed.toLocaleString() + " MB", "Total: " + (m.memory_total_mb == null ? "Unavailable" : m.memory_total_mb.toLocaleString() + " MB")],
+            ["Disk free", m.disk_free_gb.toFixed(2) + " GB", "Total: " + m.disk_total_gb.toFixed(2) + " GB"]
+          ].map(item => '<article class="managed-server"><div class="managed-server-top"><span class="game mc">N</span><span class="server-status configured"><i></i>Live</span></div><h3>' + esc(item[0]) + '</h3><p>' + esc(item[1]) + '</p><div class="managed-server-id">' + esc(item[2]) + '</div></article>').join("");
+        } catch (error) { target.innerHTML = '<div class="notice-panel">' + esc(error.message) + '</div>'; }
+      };
+      root.querySelector("#refreshHostMetrics").addEventListener("click", loadHostMetrics);
+      loadHostMetrics();
+      return;
+    }
     const content = {
       "Nodes & Capacity":["Node inventory","CPU, RAM, disk and allocation telemetry","No node agents are connected. This section will show real capacity after a node agent is added."],
-      "Backups & Recovery":["Backup jobs","Policies, snapshots and restore points","No backup provider is configured. No backup has been created by Nexus."],
-      "Store & Billing":["Products and plans","Plans, invoices and payment status","Billing is not connected. No payments or invoices are being processed."],
-      "Customers & Resellers":["Customer accounts","Owners, customers, teams and resellers","Authentication and tenant permissions must be implemented before customer access is enabled."],
+      "Backups & Recovery":["Backup jobs","Per-server local backup and restore controls","Open a server's File Manager to create backups, schedule automatic snapshots, or restore a checksum-verified backup."],
+      "Store & Billing":["Products and plans","Plans, invoices and payment status","Hosting plans and linked invoices are tracked locally. Online payment gateway verification and automatic provisioning are not enabled."],
+      "Customers & Resellers":["Customer accounts","Owners, customers, teams and resellers","Create customer accounts, assign servers, reset passwords, and suspend or reactivate access. Reseller hierarchy and email delivery are not implemented yet."],
       "Automation & AI":["Workflow center","Scheduled tasks and event-driven automation","No automation runs in the background in this version."],
       "Extensions":["Extensions library","Approved add-ons and integrations","The extension loader and marketplace are not active yet."],
-      "Security & Audit":["Activity audit","Recent changes recorded by this local workspace","The local activity feed is available on Overview. Owner login, sessions and role permissions are not yet implemented."],
+      "Security & Audit":["Activity audit","Recent changes recorded by this local workspace","Owner login, expiring sessions, login throttling and CSRF-protected mutations are active. Customer roles and full production security hardening remain pending."],
       "Settings":["Workspace settings","Control how this Nexus workspace is presented","Workspace name is set during installation. More settings will be added as their backend support is implemented."]
     }[page] || ["Workspace","Nexus Panel","This section is not available yet."];
     root.innerHTML = '<section class="card workspace-card placeholder-workspace"><div class="placeholder-icon">✦</div><h2>' + esc(content[0]) + '</h2><p>' + esc(content[1]) + '</p><div class="notice-panel">' + esc(content[2]) + '</div></section>';
   }
 }
+async function loadBackupsWorkspace(root) {
+  const target=root.querySelector("#globalBackups");
+  async function refresh(){
+    target.innerHTML='<article class="managed-server"><h3>Loading backup inventory…</h3></article>';
+    try {
+      const servers=(await api("/api/servers")).items||[];
+      if(!servers.length){target.innerHTML='<div class="empty-panel"><h3>No servers</h3><p>Create a server before setting up backups.</p></div>';return;}
+      const records=await Promise.all(servers.map(async s=>{
+        try {
+          const [b,schedule]=await Promise.all([api("/api/servers/"+encodeURIComponent(s.id)+"/backups"),api("/api/servers/"+encodeURIComponent(s.id)+"/backup-schedule")]);
+          return {server:s,backups:b.items||[],schedule:schedule.schedule||{}};
+        } catch(e){return {server:s,backups:[],schedule:{},error:e.message};}
+      }));
+      target.innerHTML=records.map(r=>'<article class="managed-server" data-backup-server="'+esc(r.server.id)+'"><div class="managed-server-top"><span class="game '+gameClass(r.server.game)+'">'+gameLetter(r.server.game)+'</span><span class="server-status '+(r.schedule.enabled?'configured':'maintenance')+'"><i></i>'+(r.schedule.enabled?'Every '+esc(r.schedule.interval_hours)+'h':'Schedule off')+'</span></div><h3>'+esc(r.server.name)+'</h3><p>'+esc(r.server.game)+' · '+r.backups.length+' backup(s)</p>'+(r.error?'<div class="notice-panel">'+esc(r.error)+'</div>':'')+'<div class="backup-record-list">'+(r.backups.length?r.backups.map(b=>'<div class="backup-record"><div><strong>'+esc(b.filename)+'</strong><small>'+esc(b.created_at)+' · '+(Number(b.size)/1024/1024).toFixed(2)+' MB</small><small>SHA-256 · '+esc(b.sha256)+'</small></div><button class="button secondary" data-restore-global="'+esc(b.id)+'" data-server-id="'+esc(r.server.id)+'">Restore</button></div>').join(""):'<div class="empty-panel"><p>No backups created yet.</p></div>')+'</div><div class="managed-server-actions"><button class="button primary" data-create-global-backup="'+esc(r.server.id)+'">Create backup now</button><button class="button secondary" data-schedule-global-backup="'+esc(r.server.id)+'">Configure schedule</button></div></article>').join("");
+    } catch(e){target.innerHTML='<div class="notice-panel">'+esc(e.message)+'</div>';}
+  }
+  target.addEventListener("click",async e=>{
+    const create=e.target.closest("[data-create-global-backup]");
+    if(create){create.disabled=true;try{const result=await api("/api/servers/"+encodeURIComponent(create.dataset.createGlobalBackup)+"/backup",{method:"POST",body:"{}"});toast("Backup created · "+Number(result.backup?.size||0).toLocaleString()+" bytes");await refresh()}catch(err){toast(err.message)}finally{create.disabled=false}return;}
+    const restore=e.target.closest("[data-restore-global]");
+    if(restore){if(!confirm("Restore this backup? The server must be stopped. Nexus creates a pre-restore safety backup first."))return;restore.disabled=true;try{const result=await api("/api/servers/"+encodeURIComponent(restore.dataset.serverId)+"/restore",{method:"POST",body:JSON.stringify({backup_id:restore.dataset.restoreGlobal})});toast("Restore complete. Safety backup: "+result.pre_restore_backup_id);await refresh()}catch(err){toast(err.message)}finally{restore.disabled=false}return;}
+    const schedule=e.target.closest("[data-schedule-global-backup]");
+    if(schedule){const raw=prompt("Backup interval in hours (1–168); enter 0 to disable.", "24");if(raw===null)return;const interval=Number.parseInt(raw,10);if(!Number.isInteger(interval)||interval<0||interval>168||(interval===0&&raw.trim()!=="0")){toast("Enter 0 to disable or a whole number from 1 to 168.");return;}try{await api("/api/servers/"+encodeURIComponent(schedule.dataset.scheduleGlobalBackup)+"/backup-schedule",{method:"POST",body:JSON.stringify({enabled:interval>0,interval_hours:interval||24})});toast(interval?"Automatic backup schedule saved.":"Automatic backups disabled.");await refresh()}catch(err){toast(err.message)}}
+  });
+  root.querySelector("#refreshGlobalBackups").addEventListener("click",refresh);
+  await refresh();
+}
+async function loadCustomersWorkspace(root) {
+  const list=root.querySelector("#customerList"), status=root.querySelector("#customerStatus");
+  const form=root.querySelector("#customerCreateForm"), assign=root.querySelector("#customerAssignForm");
+  let customers=[], servers=[];
+  const show=(message)=>{status.hidden=!message;status.textContent=message||"";};
+  async function refresh(){
+    try {
+      const result=await Promise.all([api("/api/customers"),api("/api/servers")]);
+      customers=result[0].items||[]; servers=result[1].items||[];
+      list.innerHTML=customers.length?'<div class="billing-list">'+customers.map(x=>'<article class="billing-item"><div><strong>'+esc(x.username)+'</strong><p>'+esc(x.email||"No email provided")+'</p><small>'+esc(x.status)+' · '+esc(x.server_count)+' assigned server(s) · Created '+esc(x.created_at)+'</small></div><button class="button secondary" data-reset-customer="'+esc(x.id)+'">Reset password</button><button class="button '+(x.status==="active"?"danger":"secondary")+'" data-toggle-customer="'+esc(x.id)+'" data-next-status="'+(x.status==="active"?"suspended":"active")+'">'+(x.status==="active"?"Suspend":"Reactivate")+'</button></article>').join("")+'</div>':'<div class="empty-panel"><h3>No customer accounts yet</h3><p>Create the first customer account above.</p></div>';
+      root.querySelector("#assignCustomer").innerHTML='<option value="">Choose customer</option>'+customers.filter(x=>x.status==="active").map(x=>'<option value="'+esc(x.id)+'">'+esc(x.username)+'</option>').join("");
+      root.querySelector("#assignServer").innerHTML='<option value="">Choose server</option>'+servers.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+' · '+esc(x.game)+'</option>').join("");
+    } catch(e){list.innerHTML='<div class="notice-panel">'+esc(e.message)+'</div>';}
+  }
+  list.addEventListener("click",async e=>{
+    const reset=e.target.closest("[data-reset-customer]");
+    if(reset){const new_password=prompt("Set a new password for this customer (at least 12 characters)");if(new_password===null)return;try{await api("/api/customers/"+encodeURIComponent(reset.dataset.resetCustomer)+"/password",{method:"POST",body:JSON.stringify({new_password})});show("Customer password reset. They must sign in again.");toast("Customer password reset.");}catch(err){show(err.message)}return;}
+    const toggle=e.target.closest("[data-toggle-customer]");
+    if(toggle){try{await api("/api/customers/"+encodeURIComponent(toggle.dataset.toggleCustomer)+"/status",{method:"POST",body:JSON.stringify({status:toggle.dataset.nextStatus})});show("Customer account status updated.");toast("Customer account updated.");await refresh()}catch(err){show(err.message)}}
+  });
+  form.addEventListener("submit",async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(form));try{await api("/api/customers",{method:"POST",body:JSON.stringify(data)});form.reset();show("Customer account created. Provide the initial password to the customer securely.");toast("Customer account created.");await refresh()}catch(err){show(err.message)}});
+  assign.addEventListener("submit",async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(assign));try{await api("/api/servers/"+encodeURIComponent(data.server_id)+"/assign",{method:"POST",body:JSON.stringify({customer_id:data.customer_id})});show("Server assigned. That customer can now see and control this server.");toast("Server assigned to customer.");await refresh()}catch(err){show(err.message)}});
+  await refresh();
+}
+async function loadNetworkAddress(root) {
+  const form = root.querySelector("#publicHostForm");
+  if (!form) return;
+  const input = root.querySelector("#publicHostInput");
+  const status = root.querySelector("#publicHostStatus");
+  try {
+    const d = await api("/api/network/public-host");
+    input.value = d.public_host || "";
+    status.textContent = d.configured
+      ? "Public address set. Configure firewall/router rules for each allocated TCP port."
+      : "No public host set. 127.0.0.1 addresses work only on the same machine.";
+    if (d.environment_override) { input.disabled = true; form.querySelector("button").disabled = true; status.textContent = "Public host is configured by NEXUS_PUBLIC_HOST in the environment."; }
+  } catch (error) { status.textContent = error.message; }
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    try {
+      const saved = await api("/api/network/public-host", {method:"POST",body:JSON.stringify({public_host:input.value.trim()})});
+      toast(saved.configured ? "Public game address saved." : "Public address cleared.");
+      await refreshDashboard();
+      loadNetworkAddress($("#pageWorkspace"));
+    } catch (error) { toast(error.message); }
+  }, {once:true});
+}
+async function loadBillingWorkspace(root) {
+  const plansRoot = root.querySelector("#billingPlanList");
+  const invoicesRoot = root.querySelector("#billingInvoiceList");
+  const planSelect = root.querySelector("#billingInvoicePlan");
+  try {
+    const [plansData, invoicesData, customersData] = await Promise.all([api("/api/billing/plans"), api("/api/billing/invoices"), api("/api/customers")]);
+    const plans = plansData.items, invoices = invoicesData.items, customers = customersData.items || [];
+    const customerSelect = root.querySelector("#billingInvoiceCustomer");
+    if (customerSelect) customerSelect.innerHTML = '<option value="">Manual customer</option>' + customers.filter(x=>x.status==="active").map(x=>'<option value="'+esc(x.id)+'" data-name="'+esc(x.username)+'" data-email="'+esc(x.email||"")+'">'+esc(x.username)+(x.email?' · '+esc(x.email):'')+'</option>').join("");
+    if (customerSelect && !customerSelect.dataset.bound) {
+      customerSelect.dataset.bound = "true";
+      customerSelect.addEventListener("change",()=>{const option=customerSelect.selectedOptions[0];const name=root.querySelector("#billingInvoiceName"),email=root.querySelector("#billingInvoiceEmail");if(!option||!option.value)return;if(name&&!name.value)name.value=option.dataset.name||"";if(email&&!email.value)email.value=option.dataset.email||"";});
+    }
+    if (!root.isConnected || !root.querySelector("#billingPlanForm")) return;
+    plansRoot.innerHTML = plans.length ? plans.map(p => '<article class="billing-row"><div><strong>' + esc(p.name) + '</strong><p>' + esc(p.description || "Hosting plan") + '</p><small>' + esc(p.ram_mb) + ' MB RAM · ' + esc(p.cpu_percent) + '% CPU allocation · ' + esc(p.disk_mb) + ' MB disk · ' + esc(p.server_limit) + ' server(s)</small></div><div class="billing-price"><strong>' + esc(p.currency) + ' ' + (p.price_minor / 100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</strong><small>per ' + esc(p.billing_interval) + ' · ' + (p.enabled ? 'Enabled' : 'Disabled') + '</small><button class="button secondary" data-disable-plan="' + esc(p.id) + '" ' + (p.enabled ? '' : 'disabled') + '>Disable</button></div></article>').join("") : '<div class="empty-panel"><h3>No hosting plans yet</h3><p>Create a plan above.</p></div>';
+    const enabled = plans.filter(p => p.enabled);
+    planSelect.innerHTML = enabled.length ? '<option value="">Choose a plan</option>' + enabled.map(p => '<option value="' + esc(p.id) + '">' + esc(p.name) + ' — ' + esc(p.currency) + ' ' + (p.price_minor/100).toFixed(2) + ' / ' + esc(p.billing_interval) + '</option>').join("") : '<option value="">Create an enabled plan first</option>';
+    invoicesRoot.innerHTML = invoices.length ? invoices.map(i => '<article class="billing-row"><div><strong>' + esc(i.invoice_number) + ' · ' + esc(i.plan_name) + '</strong><p>' + esc(i.customer_name) + ' · ' + esc(i.customer_email) + '</p><small>Due ' + esc(new Date(i.due_at).toLocaleDateString()) + (i.payment_reference ? ' · Reference: ' + esc(i.payment_reference) : '') + '</small></div><div class="billing-price"><strong>' + esc(i.currency) + ' ' + (i.amount_minor/100).toFixed(2) + '</strong><small class="billing-status ' + esc(i.status) + '">' + esc(i.status.toUpperCase()) + '</small>' + (i.status !== 'paid' ? '<button class="button secondary" data-record-payment="' + esc(i.id) + '">Record offline payment</button>' : '') + '</div></article>').join("") : '<div class="empty-panel"><h3>No invoices yet</h3><p>Create one using the form above.</p></div>';
+  } catch (error) {
+    if (plansRoot) plansRoot.innerHTML = '<div class="notice-panel">' + esc(error.message) + '</div>';
+    if (invoicesRoot) invoicesRoot.innerHTML = '<div class="notice-panel">' + esc(error.message) + '</div>';
+  }
+}
+document.addEventListener("submit", async event => {
+  if (event.target.id === "billingPlanForm") {
+    event.preventDefault();
+    const f = new FormData(event.target);
+    const amount = Number(f.get("price"));
+    if (!Number.isFinite(amount) || amount < 0 || amount > 1000000) { toast("Invalid plan price."); return; }
+    try {
+      await api("/api/billing/plans", {method:"POST", body:JSON.stringify({
+        name:f.get("name"), description:f.get("description"), currency:f.get("currency"),
+        price_minor:Math.round(amount*100), billing_interval:f.get("interval"),
+        ram_mb:Number(f.get("ram")), cpu_percent:Number(f.get("cpu")),
+        disk_mb:Number(f.get("disk")), server_limit:Number(f.get("limit"))
+      })});
+      toast("Hosting plan created."); await loadBillingWorkspace($("#pageWorkspace"));
+    } catch(error) { toast(error.message); }
+  }
+  if (event.target.id === "billingInvoiceForm") {
+    event.preventDefault();
+    const f = new FormData(event.target);
+    try {
+      await api("/api/billing/invoices", {method:"POST", body:JSON.stringify({
+        plan_id:f.get("plan_id"), customer_user_id:f.get("customer_user_id"), customer_name:f.get("customer_name"), customer_email:f.get("customer_email")
+      })});
+      event.target.reset(); toast("Invoice created."); await loadBillingWorkspace($("#pageWorkspace"));
+    } catch(error) { toast(error.message); }
+  }
+});
+document.addEventListener("click", async event => {
+  const disable = event.target.closest("[data-disable-plan]");
+  if (disable) {
+    if (!confirm("Disable this plan? Existing invoices will remain unchanged.")) return;
+    try { await api("/api/billing-plans/" + encodeURIComponent(disable.dataset.disablePlan), {method:"DELETE"}); toast("Plan disabled."); await loadBillingWorkspace($("#pageWorkspace")); }
+    catch(error) { toast(error.message); }
+  }
+  const record = event.target.closest("[data-record-payment]");
+  if (record) {
+    const reference = prompt("Enter the verified offline payment reference (bank/Easypaisa/JazzCash receipt ID):");
+    if (!reference || !reference.trim()) return;
+    const notes = prompt("Optional note (e.g. who verified it):") || "";
+    try { await api("/api/billing/invoices/" + encodeURIComponent(record.dataset.recordPayment) + "/record-payment", {method:"POST", body:JSON.stringify({payment_reference:reference.trim(),notes})}); toast("Manual payment reference recorded. No game server was provisioned."); await loadBillingWorkspace($("#pageWorkspace")); }
+    catch(error) { toast(error.message); }
+  }
+});
 function showPage(page) {
   currentPage = pages[page] ? page : "Overview";
   $$(".nav-link[data-page]").forEach(button => button.classList.toggle("active", button.dataset.page === currentPage));
@@ -112,6 +315,8 @@ async function refreshDashboard() {
     $("#serverCountLabel").textContent = overview.servers + " records";
     $("#serverProgress").style.width = overview.servers ? "100%" : "0%";
     renderServers(servers.items); renderConnectors(connectors.items); renderActivities(overview.activities);
+    refreshMinecraftStatuses(servers.items);
+    refreshMinecraftStatuses(servers.items);
     if (currentPage !== "Overview") renderPageWorkspace(currentPage);
     const footer = $(".footer span:last-child");
     if (footer) footer.innerHTML = '<i></i> Backend online · SQLite local MVP';
@@ -129,8 +334,8 @@ $("#connectForm").addEventListener("submit", async event => {
 $("#serverForm").addEventListener("submit", async event => {
   event.preventDefault();
   try {
-    await api("/api/servers",{method:"POST",body:JSON.stringify({name:$("#serverName").value.trim(),game:$("#serverGame").value,panel:$("#serverPanel").value,status:"Configured"})});
-    $("#serverDialog").close(); $("#serverForm").reset(); toast("Server record created."); await refreshDashboard(); showPage("Game Servers");
+    const created = await api("/api/servers",{method:"POST",body:JSON.stringify({name:$("#serverName").value.trim(),game:$("#serverGame").value,panel:$("#serverPanel").value,status:"Configured"})});
+    $("#serverDialog").close(); $("#serverForm").reset(); toast(created.item.connect_address ? "Server created. Join address: " + created.item.connect_address : "Server record created."); await refreshDashboard(); showPage("Game Servers");
   } catch (error) { toast(error.message); }
 });
 function openManageServer(id) {
@@ -157,6 +362,11 @@ $("#manageServerForm").addEventListener("submit", async event => {
 document.addEventListener("click", async event => {
   const target = event.target.closest("button");
   if (!target) return;
+  if (target.dataset.copyAddress) {
+    try { await navigator.clipboard.writeText(target.dataset.copyAddress); toast("Join address copied: " + target.dataset.copyAddress); }
+    catch (error) { window.prompt("Copy this game address:", target.dataset.copyAddress); }
+    return;
+  }
   if (target.dataset.manageServer) { openManageServer(target.dataset.manageServer); return; }
   if (target.id === "workspaceAddServer") { $("#serverDialog").showModal(); return; }
   if (target.id === "workspaceConnect") { openDialog(); return; }
@@ -174,7 +384,11 @@ document.addEventListener("click", async event => {
 $("#refresh").addEventListener("click", async () => { if (await refreshDashboard()) toast("Dashboard refreshed."); });
 $("#notifications").addEventListener("click", () => toast("Notifications will be enabled with the event system."));
 $("#activityOptions").addEventListener("click", () => showPage("Security & Audit"));
-$("#profileMenu").addEventListener("click", () => showPage("Settings"));
+$("#profileMenu").addEventListener("click", async () => {
+  if (!confirm("Sign out of Nexus Panel?")) return;
+  try { await api("/api/auth/logout", {method:"POST", body:"{}"}); location.replace("/login.html"); }
+  catch (error) { toast(error.message); }
+});
 $("#search").addEventListener("input", event => {
   const query = event.target.value.toLowerCase().trim();
   $$(".connector, #serverRows tr, .managed-server, .workspace-connector").forEach(row => { row.hidden = !!query && !row.innerText.toLowerCase().includes(query); });

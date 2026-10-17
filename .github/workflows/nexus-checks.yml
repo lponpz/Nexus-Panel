@@ -1,0 +1,31 @@
+name: Nexus checks
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Python modules
+        run: python -m py_compile server.py node_agent.py runtime_manager.py backup_manager.py tests/test_auth.py tests/test_paper_installer.py tests/test_backups.py tests/test_billing.py tests/test_network_addresses.py tests/test_modrinth_installer.py tests/test_fabric_installer.py tests/test_runtime_manager.py tests/test_node_agent.py
+      - name: Run authentication integration tests
+        run: python -m unittest discover -s tests -v
+      - name: Check browser JavaScript and shell syntax
+        run: |
+          node --check app.js
+          node --check runtime-ui.js
+          python -c "from pathlib import Path; import re; s=Path('customer.html').read_text(); m=re.search(r'<script>(.*?)</script>', s, re.S); assert m, 'customer portal script missing'; Path('/tmp/nexus-customer-inline.js').write_text(m.group(1))"
+          node --check /tmp/nexus-customer-inline.js
+          bash -n nexus setup.sh
