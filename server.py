@@ -527,6 +527,27 @@ class Handler(SimpleHTTPRequestHandler):
                     cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
                     item = db.execute("SELECT * FROM servers WHERE id=?", (sid,)).fetchone()
                 return self.json_response(200, {"ok": True, "runtime": snapshot(sid), "launch_command": cfg["launch_command"] if cfg else "java -Xms1G -Xmx2G -jar server.jar nogui", "server": server_connection_info(dict(item))})
+            if len(parts) == 4 and parts[3] == "players":
+                game = None
+                with DB_LOCK, connect_db() as db:
+                    row = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
+                game = row["game"] if row else None
+                if game != "Minecraft":
+                    return self.json_response(400, {"ok": False, "error": "Player Manager currently supports Minecraft Java servers."})
+                try:
+                    return self.json_response(200, {"ok": True, **_minecraft_online_players(sid)})
+                except (ValueError, RuntimeError, OSError) as exc:
+                    return self.json_response(400, {"ok": False, "error": str(exc)})
+            if len(parts) == 4 and parts[3] == "player-inventory":
+                player = parse_qs(urlparse(self.path).query).get("player", [""])[0]
+                with DB_LOCK, connect_db() as db:
+                    row = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
+                if not row or row["game"] != "Minecraft":
+                    return self.json_response(400, {"ok": False, "error": "Inventory viewer currently supports Minecraft Java servers."})
+                try:
+                    return self.json_response(200, {"ok": True, **_minecraft_inventory(sid, player)})
+                except (ValueError, RuntimeError, OSError) as exc:
+                    return self.json_response(400, {"ok": False, "error": str(exc)})
             if len(parts) == 4 and parts[3] == "game-status":
                 with DB_LOCK, connect_db() as db:
                     game = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
@@ -1015,6 +1036,35 @@ class Handler(SimpleHTTPRequestHandler):
                     restored = restore_backup(SERVERS_DIR / sid, selected["filename"], selected["sha256"], BACKUPS_DIR / sid)
                     add_activity("Server backup restored", sid + " · " + selected["filename"])
                     return self.json_response(200, {"ok": True, "restore": restored, "pre_restore_backup_id": pre_id})
+                if action == "player-action":
+                    with DB_LOCK, connect_db() as db:
+                        game_row = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
+                    if not game_row or game_row["game"] != "Minecraft":
+                        raise ValueError("Player Manager currently supports Minecraft Java servers.")
+                    action_name = str(data.get("action", "")).strip().lower()
+                    player = _minecraft_player_name(data.get("player", ""))
+                    reason = str(data.get("reason", "Action issued by server administrator")).strip()
+                    reason = re.sub(r"[^A-Za-z0-9 _.,:;!?()\-]", "", reason)[:120] or "Action issued by server administrator"
+                    commands = {
+                        "kick": "kick " + player + " " + reason,
+                        "ban": "ban " + player + " " + reason,
+                        "unban": "pardon " + player,
+                        "op": "op " + player,
+                        "deop": "deop " + player,
+                        "whitelist-add": "whitelist add " + player,
+                        "whitelist-remove": "whitelist remove " + player,
+                    }
+                    if action_name == "gamemode":
+                        mode = str(data.get("gamemode", "")).lower()
+                        if mode not in ("survival", "creative", "adventure", "spectator"):
+                            raise ValueError("Choose survival, creative, adventure or spectator.")
+                        commands[action_name] = "gamemode " + mode + " " + player
+                    if action_name not in commands:
+                        raise ValueError("Unsupported player action.")
+                    from runtime_manager import command
+                    command(sid, commands[action_name])
+                    add_activity("Minecraft player action", action_name + " · " + player + " · " + sid)
+                    return self.json_response(200, {"ok": True, "action": action_name, "player": player, "command_sent": True})
                 if action == "start":
                     with DB_LOCK, connect_db() as db:
                         cfg = db.execute("SELECT launch_command FROM server_runtime WHERE server_id=?", (sid,)).fetchone()
@@ -1200,6 +1250,62 @@ def _backup_scheduler_loop():
                 _run_scheduled_backup(item["server_id"], item["interval_hours"])
         except Exception as exc:
             print("[nexus] Backup scheduler error: " + str(exc))
+
+
+def _minecraft_player_name(value):
+    name = str(value or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,16}", name):
+        raise ValueError("Enter a valid Java Edition player name (1–16 letters, numbers or underscores).")
+    return name
+
+
+def _minecraft_console_query(server_id, command_text, expected, timeout=5):
+    """Issue a safe query and return only output produced after that query was sent."""
+    from runtime_manager import command, logs, snapshot
+    if not snapshot(server_id).get("running"):
+        raise RuntimeError("Start the Minecraft server first.")
+    before = len(logs(server_id).get("logs", []))
+    command(server_id, command_text)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        entries = logs(server_id).get("logs", [])
+        fresh = entries[before:]
+        for entry in fresh:
+            if entry.get("stream") == "output" and expected(entry.get("text", "")):
+                return entry.get("text", "")
+        time.sleep(0.12)
+    raise RuntimeError("Minecraft did not return the expected response in time. Check Console and ensure the server software supports this command.")
+
+
+def _minecraft_online_players(server_id):
+    output = _minecraft_console_query(server_id, "list", lambda line: "players online:" in line.lower() or "player online:" in line.lower())
+    match = re.search(r"(?i)(?:players?|players?) online:\s*(.*)$", output)
+    if not match:
+        match = re.search(r"(?i)online:\s*(.*)$", output)
+    names = []
+    if match:
+        for value in match.group(1).split(","):
+            name = value.strip()
+            if re.fullmatch(r"[A-Za-z0-9_]{1,16}", name):
+                names.append(name)
+    count_match = re.search(r"(?i)(\d+)\s+of\s+a\s+max(?:imum)?\s+of\s+(\d+)", output)
+    return {"online": True, "players": names, "count": int(count_match.group(1)) if count_match else len(names),
+            "max_players": int(count_match.group(2)) if count_match else None, "raw": output}
+
+
+def _minecraft_inventory(server_id, player_name):
+    name = _minecraft_player_name(player_name)
+    output = _minecraft_console_query(server_id, "data get entity " + name + " Inventory",
+        lambda line: "following entity data" in line.lower() or "no entity was found" in line.lower() or "unable to find entity" in line.lower())
+    if "no entity was found" in output.lower() or "unable to find entity" in output.lower():
+        raise ValueError("Player is not online, so their inventory cannot be inspected.")
+    items = []
+    # Minecraft's vanilla NBT response uses Slot, id and count fields. Preserve the
+    # raw response too, so future component/NBT format changes don't hide data.
+    for item in re.finditer(r"\{[^{}]*?(?:Slot|slot)\s*:\s*(-?\d+)b?[^{}]*?(?:id|Id)\s*:\s*\"([a-z0-9_.-]+:[a-z0-9_./-]+)\"[^{}]*?(?:count|Count)\s*:\s*(\d+)[^{}]*?\}", output):
+        slot, item_id, count = item.groups()
+        items.append({"slot": int(slot), "id": item_id, "count": int(count)})
+    return {"player": name, "items": items, "raw": output, "format": "vanilla-command-nbt"}
 
 
 def ensure_node_agent():
