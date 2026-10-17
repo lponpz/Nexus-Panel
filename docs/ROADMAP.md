@@ -31,16 +31,16 @@ A planned feature is not complete until implemented, tested, and documented. The
 - Localization and language packs, locale/timezone, dates, numbers and currency display.
 
 ## Selected Nexus features (user-approved scope)
-- Automatic Backup Scheduler.
-- Mod Compatibility Checker.
-- Hosting Plan Builder.
-- Nexus Plugin Marketplace.
-- Expiry Grace Dashboard.
-- Free Server Queue.
-- Server Templates.
-- Live Performance Dashboard.
-- Role Permission Builder.
-- One-Click Restore.
+- [x] Automatic Backup Scheduler (local storage, configurable interval, 20-backup retention).
+- [ ] Mod Compatibility Checker.
+- [ ] Hosting Plan Builder.
+- [ ] Nexus Plugin Marketplace.
+- [ ] Expiry Grace Dashboard.
+- [ ] Free Server Queue.
+- [ ] Server Templates.
+- [ ] Live Performance Dashboard.
+- [ ] Role Permission Builder.
+- [x] One-Click Restore (checksum-verified backup, pre-restore safety snapshot).
 
 These remain planned until the relevant storage, scheduler, node, permission, and recovery backends are implemented and tested.
 
