@@ -22,7 +22,8 @@ jobs:
         run: python -m py_compile server.py runtime_manager.py backup_manager.py tests/test_auth.py tests/test_paper_installer.py tests/test_backups.py
       - name: Run authentication integration tests
         run: python -m unittest discover -s tests -v
-      - name: Check browser JavaScript syntax
+      - name: Check browser JavaScript and shell syntax
         run: |
           node --check app.js
           node --check runtime-ui.js
+          bash -n nexus setup.sh
