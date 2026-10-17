@@ -29,7 +29,16 @@ else: s.close(); sys.exit(0)' "$1"
 if is_nexus_running "$PORT"; then
   echo "Nexus Panel is already running on port $PORT."
 else
-  # If an older static preview or unrelated process occupies the port, use the next available one.
+  # Clean up only the legacy static preview process recorded by the previous Nexus launcher.
+  if [ -f /tmp/nexus-dashboard.pid ]; then
+    OLD_PID="$(cat /tmp/nexus-dashboard.pid 2>/dev/null || true)"
+    if [ -n "$OLD_PID" ] && ps -p "$OLD_PID" -o args= 2>/dev/null | grep -Fq "http.server $PORT"; then
+      echo "Stopping the old static preview on port $PORT..."
+      kill "$OLD_PID" 2>/dev/null || true
+      sleep 1
+    fi
+  fi
+  # If another service still occupies the port, use the next available one.
   for attempt in $(seq 1 10); do
     if port_is_open "$PORT"; then break; fi
     PORT=$((PORT + 1))
