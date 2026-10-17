@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile Python modules
-        run: python -m py_compile server.py runtime_manager.py tests/test_auth.py
+        run: python -m py_compile server.py runtime_manager.py tests/test_auth.py tests/test_paper_installer.py
       - name: Run authentication integration tests
         run: python -m unittest discover -s tests -v
       - name: Check browser JavaScript syntax
