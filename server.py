@@ -899,6 +899,38 @@ class Handler(SimpleHTTPRequestHandler):
                         server_name = db.execute("SELECT name FROM servers WHERE id=?", (sid,)).fetchone()["name"]
                     add_activity("Server assigned to customer", server_name + " · " + customer_id)
                     return self.json_response(200, {"ok": True, "server_id": sid, "customer_id": customer_id})
+                if action == "install-fabric":
+                    with DB_LOCK, connect_db() as db:
+                        game_row = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
+                        port_row = db.execute("SELECT port FROM server_ports WHERE server_id=?", (sid,)).fetchone()
+                    if not game_row or game_row["game"] != "Minecraft":
+                        raise ValueError("The Fabric installer is available only for Minecraft servers.")
+                    if snapshot(sid).get("running"):
+                        raise RuntimeError("Stop the server before installing Fabric.")
+                    from runtime_manager import install_fabric_server
+                    result = install_fabric_server(SERVERS_DIR / sid, str(data.get("version", "latest")))
+                    metadata_path = SERVERS_DIR / sid / "nexus-server.json"
+                    metadata_tmp = metadata_path.with_suffix(".json.tmp")
+                    metadata_tmp.write_text(json.dumps({"software":"fabric","game_version":result["version"],"loader_version":result["loader_version"],"installer_version":result["installer_version"],"installed_at":now()},separators=(",",":")),encoding="utf-8")
+                    os.replace(metadata_tmp,metadata_path)
+                    if port_row: configure_minecraft_properties(sid,port_row["port"])
+                    with DB_LOCK, connect_db() as db:
+                        db.execute("UPDATE server_runtime SET launch_command=?,updated_at=? WHERE server_id=?", (result["launch_command"],now(),sid))
+                    add_activity("Fabric server software installed",sid+" · "+result["version"])
+                    return self.json_response(200,{"ok":True,"install":result})
+                if action == "install-mod":
+                    with DB_LOCK, connect_db() as db:
+                        game_row = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
+                    if not game_row or game_row["game"] != "Minecraft":
+                        raise ValueError("The Modrinth mod installer is available only for Minecraft servers.")
+                    if snapshot(sid).get("running"):
+                        raise RuntimeError("Stop the server before installing a mod.")
+                    from runtime_manager import install_modrinth_mod, detect_minecraft_version, detect_server_software
+                    if detect_server_software(SERVERS_DIR / sid) != "fabric":
+                        raise ValueError("Install the Fabric server software first. Paper servers use plugins, not Fabric mods.")
+                    result = install_modrinth_mod(SERVERS_DIR / sid,str(data.get("query","")),detect_minecraft_version(SERVERS_DIR / sid))
+                    add_activity("Fabric mod installed",sid+" · "+result["project"]+" "+result["version"])
+                    return self.json_response(200,{"ok":True,"mod":result})
                 if action == "install-plugin":
                     with DB_LOCK, connect_db() as db:
                         game_row = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
@@ -906,7 +938,10 @@ class Handler(SimpleHTTPRequestHandler):
                         raise ValueError("The Modrinth plugin installer is available only for Minecraft servers.")
                     if snapshot(sid).get("running"):
                         raise RuntimeError("Stop the Minecraft server before installing a plugin.")
-                    from runtime_manager import install_modrinth_plugin, detect_minecraft_version
+                    from runtime_manager import install_modrinth_plugin, detect_minecraft_version, detect_server_software
+                    software = detect_server_software(SERVERS_DIR / sid)
+                    if software == "fabric":
+                        raise ValueError("This is a Fabric server. Use Install compatible mod instead of a Paper plugin.")
                     version = detect_minecraft_version(SERVERS_DIR / sid)
                     result = install_modrinth_plugin(SERVERS_DIR / sid, str(data.get("query", "")), version)
                     add_activity("Paper plugin installed", sid + " · " + result["project"] + " " + result["version"])
@@ -918,6 +953,9 @@ class Handler(SimpleHTTPRequestHandler):
                         raise ValueError("The Paper installer is available only for Minecraft servers.")
                     if snapshot(sid).get("running"):
                         raise RuntimeError("Stop the server before installing or replacing server software.")
+                    from runtime_manager import detect_server_software
+                    if detect_server_software(SERVERS_DIR / sid) == "fabric":
+                        raise ValueError("Fabric is already installed. Remove or back up its files before switching server software.")
                     result = install_paper(SERVERS_DIR / sid, str(data.get("version", "latest")))
                     metadata_path = SERVERS_DIR / sid / "nexus-server.json"
                     metadata_tmp = metadata_path.with_suffix(".json.tmp")
