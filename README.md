@@ -2,7 +2,7 @@
 
 **Nexus Panel — independent game-hosting panel in active development**
 
-Nexus has its own Blue Neon web UI, Python API, SQLite state, first-run owner setup, PBKDF2 password hashing, expiring HttpOnly sessions, login throttling, CSRF protection for mutations, per-server workspace, Java process adapter, browser console, and basic file manager. It is not a fork of Pterodactyl. The current runtime is a development adapter, not yet a production-grade Wings/node replacement.
+Nexus has its own Blue Neon web UI, Python API, SQLite state, first-run owner setup, PBKDF2 password hashing, expiring HttpOnly sessions, login throttling, CSRF protection for mutations, per-server workspace, a token-authenticated loopback-only node agent that owns game processes independently of the web panel, browser console, and basic file manager. It is not a fork of Pterodactyl. The current runtime is a single local development node, not yet a production-grade Wings/node replacement.
 
 ## One-command setup (Linux / GitHub Codespaces)
 
@@ -14,9 +14,7 @@ bash setup.sh
 
 The bootstrap checks Python, compiles the Python modules, creates the local data directories and SQLite database, attempts to install OpenJDK 21 when Java is missing on an apt-based Linux host, and starts the panel. If Java installation requires unavailable privileges or the package is unavailable, it stops with an explicit message. On later runs, use `bash ./nexus`.
 
-Open the installer/dashboard URL printed by the launcher. If it does not open automatically, open the matching port in the Codespaces **Ports** tab. Keep that port **Private**.
-
-**Node scope:** this one-command bootstrap prepares the local development runtime on the machine where it runs. It cannot provision remote VPS nodes that you have not given access to; a secure remote node agent and authenticated pairing still need to be built before claiming multi-node hosting.
+**Node scope:** this branch starts a private loopback-only node agent using a random token stored with restrictive file permissions. It keeps local game processes alive when the web panel restarts. It does not provision remote VPS nodes and does not yet provide container isolation, enforced CPU/RAM/disk quotas, or remote-node pairing.
 
 Open the installer/dashboard URL printed by the launcher. If it does not open automatically, open the matching port in the Codespaces **Ports** tab. Keep that port **Private**.
 
