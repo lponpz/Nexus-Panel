@@ -1238,6 +1238,7 @@ def ensure_node_agent():
         pass
     log_path = DATA_DIR / "node-agent.log"
     env = os.environ.copy()
+    env["NEXUS_DATA_DIR"] = str(DATA_DIR)
     env["NEXUS_NODE_AGENT_MODE"] = "1"
     agent_script = ROOT / "node_agent.py"
     if not agent_script.is_file():
