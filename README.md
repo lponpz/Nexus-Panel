@@ -34,7 +34,7 @@ Open the installer/dashboard URL printed by the launcher. If it does not open au
 - Per-server file browser, text file create/edit/delete, folder create, uploads up to 50 MB, and downloads up to 200 MB.
 - SQLite activity log, overview counts, and connector endpoint records.
 
-## Current runtime limitations
+## Billing and hosting plans (implemented foundation)\n\n- Owner can create/disable monthly or yearly hosting plans with PKR/USD/INR prices and RAM/CPU allocation/disk/server limits.\n- Owner can create invoice records from enabled plans; invoice amount and plan name are snapshotted, with due dates and unique invoice numbers.\n- Owner can record offline payment references once checked against a receipt; duplicate paid-state transitions are rejected.\n- This is invoice tracking/manual reconciliation only: no card, Easypaisa, JazzCash, bank API or payment gateway is connected, and no server is provisioned automatically after an invoice is marked paid. Never treat a customer-provided reference alone as verified payment. Customer accounts/portal and payment-provider webhook signature verification remain required.\n\n## Current runtime limitations
 
 - This runtime launches Java processes on the same machine as Nexus. It does not yet provide a secure isolated node daemon/container like Pterodactyl Wings.
 - The host must have a compatible Java runtime installed. Upload the Java server JAR as `server.jar`; accept the Minecraft EULA by creating/editing `eula.txt` if applicable.
