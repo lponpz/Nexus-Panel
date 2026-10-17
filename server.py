@@ -170,6 +170,22 @@ class Handler(SimpleHTTPRequestHandler):
                         return self.json_response(404, {"ok": False, "error": "Server not found"})
                     from runtime_manager import logs
                     return self.json_response(200, {"ok": True, **logs(parts[2])})
+                if len(parts) == 4 and parts[3] == "file-content":
+                    if not server_exists(parts[2]):
+                        return self.json_response(404, {"ok": False, "error": "Server not found"})
+                    from urllib.parse import parse_qs
+                    from runtime_manager import server_path
+                    rel = parse_qs(urlparse(self.path).query).get("path", [""])[0]
+                    try:
+                        target = server_path(SERVERS_DIR / parts[2], rel)
+                        if not target.is_file() or target.is_symlink():
+                            return self.json_response(400, {"ok": False, "error": "Text file not found"})
+                        if target.stat().st_size > 1000000:
+                            return self.json_response(400, {"ok": False, "error": "File is larger than 1 MB"})
+                        content = target.read_text(encoding="utf-8")
+                        return self.json_response(200, {"ok": True, "content": content})
+                    except (ValueError, OSError, UnicodeDecodeError) as exc:
+                        return self.json_response(400, {"ok": False, "error": "Cannot read text file: " + str(exc)})
                 if len(parts) == 4 and parts[3] == "files":
                     if not server_exists(parts[2]):
                         return self.json_response(404, {"ok": False, "error": "Server not found"})
