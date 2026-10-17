@@ -103,6 +103,8 @@ class NetworkAddressTests(unittest.TestCase):
         self.assertEqual(status,200,new_login)
         status,_,other=request("/api/servers/"+created["item"]["id"],cookie=headers2.get("Set-Cookie"))
         self.assertEqual(status,404,other)
+        status,_,edit=request("/api/servers/"+created["item"]["id"],"PUT",{"name":"Unauthorized rename"},headers2.get("Set-Cookie"),login2["csrf_token"])
+        self.assertEqual(status,403,edit)
         status,_,suspended=request("/api/customers/"+second["customer"]["id"]+"/status","POST",{"status":"suspended"},self.cookie,self.csrf)
         self.assertEqual(status,200,suspended)
         status,_,suspended_login=request("/api/auth/login","POST",{"username":"customer-two","password":"customer-two-reset-password"})
