@@ -187,6 +187,34 @@ def install_paper(directory, version="latest"):
                 pass
 
 
+def _validate(command):
+    if not isinstance(command, str) or not command.strip() or len(command) > 500:
+        raise ValueError("Enter a launch command under 500 characters.")
+    if any(ch in command for ch in (";", "|", "&", ">", "<", chr(96), "$", "\n", "\r")):
+        raise ValueError("Launch command cannot contain shell operators.")
+    try:
+        args = shlex.split(command)
+    except ValueError:
+        raise ValueError("Launch command quoting is invalid.")
+    if not args or Path(args[0]).name not in ("java", "java.exe"):
+        raise ValueError("Only Java server processes can be launched by this adapter.")
+    if any(arg.startswith(("/", "~")) for arg in args[1:]):
+        raise ValueError("Use paths relative to the server folder.")
+    return args
+
+
+def _reader(server_id, process):
+    for line in iter(process.stdout.readline, ""):
+        with _LOCK:
+            item = _PROCESSES.get(server_id)
+            if item:
+                item["logs"].append({"time": _now(), "stream": "output", "text": line.rstrip()[:4000]})
+    with _LOCK:
+        item = _PROCESSES.get(server_id)
+        if item:
+            item["logs"].append({"time": _now(), "stream": "system", "text": "Process exited with code " + str(process.poll())})
+
+
 def start(server_id, directory, command):
     args = _validate(command)
     root = Path(directory).resolve()
