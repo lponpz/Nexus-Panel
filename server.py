@@ -1028,6 +1028,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_PUT(self):
         if not self.api_authenticated():
             return
+        if not owner_only(self): return
         path = urlparse(self.path).path.rstrip("/")
         parts = path.split("/")
         if len(parts) != 4 or parts[1:3] != ["api", "servers"]: return self.json_response(404, {"ok": False, "error": "API route not found"})
