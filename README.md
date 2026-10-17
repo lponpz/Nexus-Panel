@@ -28,7 +28,8 @@ Open the installer/dashboard URL printed by the launcher. If it does not open au
 - Server record creation, editing and deletion.
 - Per-server workspace folders.
 - Java-only process launch/stop/restart for a server JAR named `server.jar`.
-- One-click stable Paper server installer using PaperMC's current Fill API; it validates the artifact host and published SHA-256, checks size, and atomically installs `server.jar` without overwriting an existing JAR.
+- One-click stable Paper server installer using PaperMC's current Fill API; it chooses a Java-compatible stable version, validates the artifact host and published SHA-256, checks size, and atomically installs `server.jar` without overwriting an existing JAR.
+- Per-server manual and scheduled backups; one-click restore verifies backup SHA-256 and creates a pre-restore safety backup. Scheduled backups retain the latest 20 records per server.
 - Browser console with output polling and game-console command input.
 - Per-server file browser, text file create/edit/delete, folder create, uploads up to 50 MB, and downloads up to 200 MB.
 - SQLite activity log, overview counts, and connector endpoint records.
@@ -38,6 +39,7 @@ Open the installer/dashboard URL printed by the launcher. If it does not open au
 - This runtime launches Java processes on the same machine as Nexus. It does not yet provide a secure isolated node daemon/container like Pterodactyl Wings.
 - The host must have a compatible Java runtime installed. Upload the Java server JAR as `server.jar`; accept the Minecraft EULA by creating/editing `eula.txt` if applicable.
 - File uploads are currently limited to 50 MB and downloads to 200 MB; archive extraction is not implemented.
+- Backups are stored locally on the same host/disk; remote encrypted backup storage and isolated restore drills are not implemented.
 - The Paper installer requires outbound HTTPS access to PaperMC's official Fill API and download host. Vanilla, Fabric, Forge, FiveM and Terraria auto-installers are not implemented yet.
 - FiveM/Terraria-specific runtimes, automatic game installers, allocations/ports, resource telemetry, crash recovery, scheduled tasks, backups/restores, SFTP, users/roles, and live Pterodactyl/Pelican/AMP API adapters are not implemented.
 - Owner authentication is implemented, but multi-user/customer accounts, per-server ownership, role permissions, password reset, MFA, and full production security review are not implemented.
