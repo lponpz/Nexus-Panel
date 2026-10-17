@@ -1217,7 +1217,7 @@ def ensure_node_agent():
     if len(token) < 32:
         token = secrets.token_urlsafe(48)
         temp = token_path.with_suffix(".tmp")
-        temp.write_text(token + "\\n", encoding="utf-8")
+        temp.write_text(token, encoding="utf-8")
         try: os.chmod(temp, 0o600)
         except OSError: pass
         os.replace(temp, token_path)
