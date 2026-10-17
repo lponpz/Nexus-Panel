@@ -77,6 +77,9 @@ function renderPageWorkspace(page) {
   } else if (page === "Panel Connectors") {
     root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Panel connections</h2><p>Stored endpoints, not yet authenticated.</p></div><button class="button primary" id="workspaceConnect">＋ Add connector</button></div><div class="workspace-connector-list">' +
       (cachedConnectors.length ? cachedConnectors.map(item => '<div class="workspace-connector"><div><strong>' + esc(item.panel_type) + '</strong><p>' + esc(item.base_url) + '</p><small>' + esc(item.status) + '</small></div><button class="button danger" data-delete-connector="' + esc(item.id) + '">Remove</button></div>').join("") : '<div class="empty-panel"><h3>No panel connections</h3><p>Add a Pterodactyl, Pelican or AMP endpoint.</p></div>') + '</div></section><div class="notice-panel">For safety, Nexus currently stores only the URL. It does not store API keys or send commands to external panels.</div>';
+  } else if (page === "Store & Billing") {
+    root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Hosting plans</h2><p>Create real plan records with monthly/yearly pricing and resource limits.</p></div></div><form id="billingPlanForm" class="billing-form"><label>Plan name<input name="name" maxlength="80" required placeholder="Starter"></label><label>Description<input name="description" maxlength="500" placeholder="For small communities"></label><div class="billing-fields"><label>Currency<select name="currency"><option>PKR</option><option>USD</option><option>INR</option></select></label><label>Price (whole currency units)<input name="price" type="number" min="0" max="1000000" value="500" required></label><label>Interval<select name="interval"><option value="month">Monthly</option><option value="year">Yearly</option></select></label><label>RAM (MB)<input name="ram" type="number" min="256" max="1048576" value="2048" required></label><label>CPU allocation (%)<input name="cpu" type="number" min="10" max="6400" value="100" required></label><label>Disk (MB)<input name="disk" type="number" min="512" max="1048576" value="10240" required></label><label>Server limit<input name="limit" type="number" min="1" max="100" value="1" required></label></div><button class="button primary" type="submit">Create hosting plan</button></form><div id="billingPlanList" class="billing-list">Loading plans…</div></section><section class="card workspace-card"><div class="section-heading"><div><h2>Invoices</h2><p>Create invoices against enabled plans and record offline payments.</p></div></div><form id="billingInvoiceForm" class="billing-form"><label>Plan<select name="plan_id" id="billingInvoicePlan" required><option value="">Loading plans…</option></select></label><label>Customer name<input name="customer_name" maxlength="120" required></label><label>Customer email<input name="customer_email" type="email" maxlength="254" required></label><button class="button primary" type="submit">Create invoice</button></form><div id="billingInvoiceList" class="billing-list">Loading invoices…</div><div class="notice-panel"><strong>Payment safety:</strong> this version tracks invoices and manual payment references only. It does not accept online payments or automatically provision servers after payment. A verified payment gateway and customer account system are still required.</div></section>';
+    loadBillingWorkspace(root);
   } else {
     if (page === "Nodes & Capacity") {
       root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Local host capacity</h2><p>Live operating-system metrics for the machine running this Nexus instance.</p></div><button class="button secondary" id="refreshHostMetrics">↻ Refresh metrics</button></div><div class="managed-server-grid" data-host-metrics><article class="managed-server"><h3>Loading telemetry…</h3><p>Reading CPU, memory and disk statistics.</p></article></div><div class="notice-panel">These are host-level readings, not per-container quotas. Remote nodes, container isolation and enforced resource limits are not implemented yet.</div></section>';
@@ -109,6 +112,66 @@ function renderPageWorkspace(page) {
     root.innerHTML = '<section class="card workspace-card placeholder-workspace"><div class="placeholder-icon">✦</div><h2>' + esc(content[0]) + '</h2><p>' + esc(content[1]) + '</p><div class="notice-panel">' + esc(content[2]) + '</div></section>';
   }
 }
+async function loadBillingWorkspace(root) {
+  const plansRoot = root.querySelector("#billingPlanList");
+  const invoicesRoot = root.querySelector("#billingInvoiceList");
+  const planSelect = root.querySelector("#billingInvoicePlan");
+  try {
+    const [plansData, invoicesData] = await Promise.all([api("/api/billing/plans"), api("/api/billing/invoices")]);
+    const plans = plansData.items, invoices = invoicesData.items;
+    if (!root.isConnected || !root.querySelector("#billingPlanForm")) return;
+    plansRoot.innerHTML = plans.length ? plans.map(p => '<article class="billing-row"><div><strong>' + esc(p.name) + '</strong><p>' + esc(p.description || "Hosting plan") + '</p><small>' + esc(p.ram_mb) + ' MB RAM · ' + esc(p.cpu_percent) + '% CPU allocation · ' + esc(p.disk_mb) + ' MB disk · ' + esc(p.server_limit) + ' server(s)</small></div><div class="billing-price"><strong>' + esc(p.currency) + ' ' + (p.price_minor / 100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</strong><small>per ' + esc(p.billing_interval) + ' · ' + (p.enabled ? 'Enabled' : 'Disabled') + '</small><button class="button secondary" data-disable-plan="' + esc(p.id) + '" ' + (p.enabled ? '' : 'disabled') + '>Disable</button></div></article>').join("") : '<div class="empty-panel"><h3>No hosting plans yet</h3><p>Create a plan above.</p></div>';
+    const enabled = plans.filter(p => p.enabled);
+    planSelect.innerHTML = enabled.length ? '<option value="">Choose a plan</option>' + enabled.map(p => '<option value="' + esc(p.id) + '">' + esc(p.name) + ' — ' + esc(p.currency) + ' ' + (p.price_minor/100).toFixed(2) + ' / ' + esc(p.billing_interval) + '</option>').join("") : '<option value="">Create an enabled plan first</option>';
+    invoicesRoot.innerHTML = invoices.length ? invoices.map(i => '<article class="billing-row"><div><strong>' + esc(i.invoice_number) + ' · ' + esc(i.plan_name) + '</strong><p>' + esc(i.customer_name) + ' · ' + esc(i.customer_email) + '</p><small>Due ' + esc(new Date(i.due_at).toLocaleDateString()) + (i.payment_reference ? ' · Reference: ' + esc(i.payment_reference) : '') + '</small></div><div class="billing-price"><strong>' + esc(i.currency) + ' ' + (i.amount_minor/100).toFixed(2) + '</strong><small class="billing-status ' + esc(i.status) + '">' + esc(i.status.toUpperCase()) + '</small>' + (i.status !== 'paid' ? '<button class="button secondary" data-record-payment="' + esc(i.id) + '">Record offline payment</button>' : '') + '</div></article>').join("") : '<div class="empty-panel"><h3>No invoices yet</h3><p>Create one using the form above.</p></div>';
+  } catch (error) {
+    if (plansRoot) plansRoot.innerHTML = '<div class="notice-panel">' + esc(error.message) + '</div>';
+    if (invoicesRoot) invoicesRoot.innerHTML = '<div class="notice-panel">' + esc(error.message) + '</div>';
+  }
+}
+document.addEventListener("submit", async event => {
+  if (event.target.id === "billingPlanForm") {
+    event.preventDefault();
+    const f = new FormData(event.target);
+    const amount = Number(f.get("price"));
+    if (!Number.isFinite(amount) || amount < 0 || amount > 1000000) { toast("Invalid plan price."); return; }
+    try {
+      await api("/api/billing/plans", {method:"POST", body:JSON.stringify({
+        name:f.get("name"), description:f.get("description"), currency:f.get("currency"),
+        price_minor:Math.round(amount*100), billing_interval:f.get("interval"),
+        ram_mb:Number(f.get("ram")), cpu_percent:Number(f.get("cpu")),
+        disk_mb:Number(f.get("disk")), server_limit:Number(f.get("limit"))
+      })});
+      toast("Hosting plan created."); await loadBillingWorkspace($("#pageWorkspace"));
+    } catch(error) { toast(error.message); }
+  }
+  if (event.target.id === "billingInvoiceForm") {
+    event.preventDefault();
+    const f = new FormData(event.target);
+    try {
+      await api("/api/billing/invoices", {method:"POST", body:JSON.stringify({
+        plan_id:f.get("plan_id"), customer_name:f.get("customer_name"), customer_email:f.get("customer_email")
+      })});
+      event.target.reset(); toast("Invoice created."); await loadBillingWorkspace($("#pageWorkspace"));
+    } catch(error) { toast(error.message); }
+  }
+});
+document.addEventListener("click", async event => {
+  const disable = event.target.closest("[data-disable-plan]");
+  if (disable) {
+    if (!confirm("Disable this plan? Existing invoices will remain unchanged.")) return;
+    try { await api("/api/billing-plans/" + encodeURIComponent(disable.dataset.disablePlan), {method:"DELETE"}); toast("Plan disabled."); await loadBillingWorkspace($("#pageWorkspace")); }
+    catch(error) { toast(error.message); }
+  }
+  const record = event.target.closest("[data-record-payment]");
+  if (record) {
+    const reference = prompt("Enter the verified offline payment reference (bank/Easypaisa/JazzCash receipt ID):");
+    if (!reference || !reference.trim()) return;
+    const notes = prompt("Optional note (e.g. who verified it):") || "";
+    try { await api("/api/billing/invoices/" + encodeURIComponent(record.dataset.recordPayment) + "/record-payment", {method:"POST", body:JSON.stringify({payment_reference:reference.trim(),notes})}); toast("Manual payment reference recorded. No game server was provisioned."); await loadBillingWorkspace($("#pageWorkspace")); }
+    catch(error) { toast(error.message); }
+  }
+});
 function showPage(page) {
   currentPage = pages[page] ? page : "Overview";
   $$(".nav-link[data-page]").forEach(button => button.classList.toggle("active", button.dataset.page === currentPage));
