@@ -102,6 +102,30 @@ class AuthIntegrationTests(unittest.TestCase):
         self.assertTrue(headers.get("Set-Cookie", "").startswith("nexus_session="))
         self.assertTrue(data["csrf_token"])
 
+    def test_file_download_and_server_delete(self):
+        cookie, csrf = self.create_owner()
+        payload = {"name": "Download Test", "game": "Minecraft", "panel": "Nexus (local)", "status": "Configured"}
+        status, _, data = request("/api/servers", "POST", payload, cookie=cookie, csrf=csrf)
+        self.assertEqual(status, 201, data)
+        server_id = data["item"]["id"]
+        folder = server.SERVERS_DIR / server_id
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "hello.txt").write_text("nexus download test", encoding="utf-8")
+        req = urllib.request.Request(BASE + "/api/servers/" + server_id + "/file-download?path=hello.txt",
+                                     headers={"Cookie": cookie.split(";", 1)[0]})
+        with urllib.request.urlopen(req, timeout=3) as response:
+            self.assertEqual(response.read(), b"nexus download test")
+            self.assertIn("attachment", response.headers.get("Content-Disposition", ""))
+        status, _, data = request("/api/servers/" + server_id, "DELETE", cookie=cookie, csrf=csrf)
+        self.assertEqual(status, 200, data)
+        self.assertFalse(folder.exists())
+
+    def test_static_server_source_is_not_served(self):
+        req = urllib.request.Request(BASE + "/server.py")
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(req, timeout=3)
+        self.assertEqual(caught.exception.code, 404)
+
 
 if __name__ == "__main__":
     try:
