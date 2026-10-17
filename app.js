@@ -19,12 +19,12 @@ function showPage(page) {
   $("#breadcrumb").textContent = page;
   const copy = pages[page] || pages.Overview;
   $("#pageTitle").innerHTML = copy[0]; $("#pageSubtitle").textContent = copy[1]; closeMenu();
-  if (page === "Game Servers") $("#serverDialog").showModal();
-  else if (page !== "Overview") toast(copy[1]);
+  if (page !== "Overview") toast(copy[1]);
 }
 $$("[data-page]").forEach(el => el.addEventListener("click", () => showPage(el.dataset.page)));
 function openDialog() { const dialog = $("#connectDialog"); if (dialog.showModal) dialog.showModal(); else toast("Please use a modern browser."); }
 $("#connect").addEventListener("click", openDialog);
+$("#addServer").addEventListener("click", () => $("#serverDialog").showModal());
 $("#addConnector").addEventListener("click", openDialog);
 $("#closeDialog").addEventListener("click", () => $("#connectDialog").close());
 $("#closeServerDialog").addEventListener("click", () => $("#serverDialog").close());
