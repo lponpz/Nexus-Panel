@@ -2,7 +2,7 @@
 
 **Nexus Panel — independent game-hosting panel in active development**
 
-Nexus has its own Blue Neon web UI, Python API, SQLite state, installer, per-server workspace, Java process adapter, browser console, and basic file manager. It is not a fork of Pterodactyl. The current runtime is a development adapter, not yet a production-grade Wings/node replacement.
+Nexus has its own Blue Neon web UI, Python API, SQLite state, first-run owner setup, PBKDF2 password hashing, expiring HttpOnly sessions, login throttling, CSRF protection for mutations, per-server workspace, Java process adapter, browser console, and basic file manager. It is not a fork of Pterodactyl. The current runtime is a development adapter, not yet a production-grade Wings/node replacement.
 
 ## One-command setup (Linux / GitHub Codespaces)
 
@@ -22,7 +22,9 @@ Open the installer/dashboard URL printed by the launcher. If it does not open au
 
 ## Currently implemented
 
-- First-run installer and persistent workspace settings.
+- First-run installer creates the workspace and first owner account; passwords are stored as salted PBKDF2-HMAC-SHA256 hashes.
+- Owner login with a 12-hour HttpOnly/SameSite session cookie, failed-login throttling, and CSRF tokens on API mutations.
+- API routes are blocked until setup; the dashboard redirects unauthenticated visitors to the login page.
 - Server record creation, editing and deletion.
 - Per-server workspace folders.
 - Java-only process launch/stop for a server JAR named `server.jar`.
@@ -36,9 +38,15 @@ Open the installer/dashboard URL printed by the launcher. If it does not open au
 - The host must have a compatible Java runtime installed. Upload the Java server JAR as `server.jar`; accept the Minecraft EULA by creating/editing `eula.txt` if applicable.
 - File uploads are currently limited to 50 MB; no archive extraction or download flow yet.
 - FiveM/Terraria-specific runtimes, automatic game installers, allocations/ports, resource telemetry, crash recovery, scheduled tasks, backups/restores, SFTP, users/roles, and live Pterodactyl/Pelican/AMP API adapters are not implemented.
-- The current app has **no login or authorization**. Never expose this development server publicly or enter secrets into it.
+- Owner authentication is implemented, but multi-user/customer accounts, per-server ownership, role permissions, password reset, MFA, and full production security review are not implemented.
+- The Java process adapter still runs game servers on the same host without container isolation or enforced CPU/RAM/PID limits. Do not expose this development build to the public internet; keep Codespaces ports Private.
+- Authentication tests and syntax checks are wired into GitHub Actions. They must pass on the branch before considering these changes verified.
 
-A complete hosting panel needs a hardened node agent, isolated process execution, authenticated owner/customer accounts, permissions, resource limits, port allocation, backups, and thorough tests. This repository is being built toward that goal in stages; do not treat this development build as production-safe.
+A complete hosting panel still needs a hardened node agent, isolated process execution, customer accounts and per-server authorization, resource limits, port allocation, real game installers, backups/restores, secure updates, and thorough integration/security tests. This repository is being built toward that goal in stages; do not treat this development build as production-safe.
+
+## JTG installer audit
+
+See [JTG audit and Nexus integration roadmap](docs/JTG_AUDIT_AND_INTEGRATION.md) for the static installer review, security findings, and staged integration plan.
 
 ## Project planning
 
