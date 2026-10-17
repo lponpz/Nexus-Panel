@@ -33,7 +33,7 @@
     try { connectInfo = (await api(url(""))).server || null; } catch (_) {}
     const addressBlock = connectInfo && connectInfo.connect_address
       ? '<div class="nx-address"><strong>Join address · Java Edition</strong><code>' + esc(connectInfo.connect_address) + '</code><button type="button" data-copy-game-address>Copy address</button><small>' + (connectInfo.public_address_configured ? 'Public address configured — allow TCP ' + esc(connectInfo.connect_port) + ' in firewall/router' : 'Local-only address. Set a public IP/domain in Game Servers settings.') + '</small></div>' : '';
-    const overlay=showModal(name+" — Console",addressBlock+'<div class="nx-tools"><button data-nx-start>Start</button><button data-nx-restart>Restart</button><button data-nx-stop>Stop</button><button data-nx-refresh>Refresh</button><span class="nx-muted" data-nx-state>Checking process…</span><span class="nx-muted" data-nx-metrics>CPU/RAM loading…</span></div><pre class="nx-console" data-nx-output>Loading logs…</pre><form class="nx-row" data-nx-command><input maxlength="1000" placeholder="Enter game console command…" required><button class="nx-action">Send</button></form><div class="nx-row"><input data-launch value="java -Xms1G -Xmx2G -jar server.jar nogui" maxlength="500"><button class="nx-action" data-save-launch>Save launch command</button></div><p class="nx-muted">Java server only in this runtime adapter. Upload server.jar in the server folder first. Owner login is enabled; keep the forwarded port private until node isolation and deployment hardening are complete.</p>');
+    const overlay=showModal(name+" — Console",addressBlock+'<div class="nx-tools"><button data-nx-start>Start</button><button data-nx-restart>Restart</button><button data-nx-stop>Stop</button><button data-nx-players>Players & Inventory</button><button data-nx-refresh>Refresh</button><span class="nx-muted" data-nx-state>Checking process…</span><span class="nx-muted" data-nx-metrics>CPU/RAM loading…</span></div><pre class="nx-console" data-nx-output>Loading logs…</pre><form class="nx-row" data-nx-command><input maxlength="1000" placeholder="Enter game console command…" required><button class="nx-action">Send</button></form><div class="nx-row"><input data-launch value="java -Xms1G -Xmx2G -jar server.jar nogui" maxlength="500"><button class="nx-action" data-save-launch>Save launch command</button></div><p class="nx-muted">Java server only in this runtime adapter. Upload server.jar in the server folder first. Owner login is enabled; keep the forwarded port private until node isolation and deployment hardening are complete.</p>');
     const output=q("[data-nx-output]",overlay), state=q("[data-nx-state]",overlay);
     const copyAddressButton=q("[data-copy-game-address]",overlay);
     if(copyAddressButton) copyAddressButton.onclick=async()=>{try{await navigator.clipboard.writeText(connectInfo.connect_address);copyAddressButton.textContent="Copied";}catch(_){window.prompt("Copy game address",connectInfo.connect_address);}};
@@ -43,9 +43,59 @@
     api(url("")).then(d=>{if(d.launch_command)q("[data-launch]",overlay).value=d.launch_command;}).catch(()=>{});
     q("[data-nx-stop]",overlay).onclick=async()=>{try{await api(url("/stop"),{method:"POST",body:"{}"});await refresh();}catch(e){state.textContent=e.message;}};
     q("[data-nx-restart]",overlay).onclick=async()=>{try{state.textContent="Restarting…";await api(url("/restart"),{method:"POST",body:JSON.stringify({launch_command:q("[data-launch]",overlay).value})});await refresh();}catch(e){state.textContent=e.message;}};
+    q("[data-nx-players]",overlay).onclick=()=>openPlayerManager(id,name);
     q("[data-nx-refresh]",overlay).onclick=refresh;
     q("[data-nx-command]",overlay).onsubmit=async e=>{e.preventDefault();const input=q("input",e.currentTarget);try{await api(url("/command"),{method:"POST",body:JSON.stringify({command:input.value})});input.value="";await refresh();}catch(err){state.textContent=err.message;}};
     await refresh();poll=setInterval(refresh,2000);
+  }
+  async function openPlayerManager(id,name) {
+    serverId=id;
+    const overlay=showModal(name+" — Player Manager",'<div class="nx-tools"><button data-pm-refresh>Refresh players</button><span class="nx-muted" data-pm-status>Loading live players…</span></div><div data-pm-list class="nx-files">Loading…</div><hr style="border-color:#20364e;margin:18px 0"><h3>Manage player by username</h3><form class="nx-row" data-pm-action><input data-pm-name maxlength="16" pattern="[A-Za-z0-9_]{1,16}" placeholder="Java username" required><select data-pm-kind style="min-width:150px;background:#07111f;color:#fff;border:1px solid #29445e;border-radius:8px;padding:10px"><option value="kick">Kick</option><option value="ban">Ban</option><option value="unban">Unban</option><option value="op">Give operator</option><option value="deop">Remove operator</option><option value="whitelist-add">Whitelist add</option><option value="whitelist-remove">Whitelist remove</option><option value="gamemode">Change gamemode</option></select><button class="nx-action">Apply</button></form><p class="nx-muted">Inventory viewing requires the player to be online and the Minecraft server to be running. Ban/unban and whitelist actions also work for offline usernames.</p><div data-pm-inventory></div>');
+    const list=q("[data-pm-list]",overlay),status=q("[data-pm-status]",overlay),inventory=q("[data-pm-inventory]",overlay);
+    const validName=v=>/^[A-Za-z0-9_]{1,16}$/.test(v);
+    async function refreshPlayers(){
+      status.textContent="Checking Minecraft server…";
+      try {
+        const d=await api(url("/players"));
+        status.textContent=d.count+" online · maximum "+(d.max_players==null?"unknown":d.max_players);
+        const names=d.players||[];
+        list.innerHTML=names.length?names.map(player=>'<div class="nx-file" data-player-row="'+esc(player)+'"><div><strong>'+esc(player)+'</strong><div class="nx-muted">Online · inventory available</div></div><div class="nx-tools" style="margin:0"><button data-player-inventory="'+esc(player)+'">View inventory</button><button data-player-kick="'+esc(player)+'">Kick</button><button data-player-ban="'+esc(player)+'">Ban</button></div></div>').join(""):'<p class="nx-muted">No online player names returned. Check the console response below if this looks incorrect.</p>';
+      } catch(err){status.textContent=err.message;list.innerHTML='<p class="nx-muted">Player list could not be loaded. Start the server and check Console. Some server software may format the list response differently.</p>';}
+    }
+    async function runAction(player,action,gamemode){
+      if(!validName(player)){alert("Enter a valid Java username.");return;}
+      const confirmText=({kick:"Kick",ban:"Ban",unban:"Unban",op:"Give operator status to",deop:"Remove operator status from","whitelist-add":"Add to whitelist","whitelist-remove":"Remove from whitelist",gamemode:"Change gamemode for"})[action]||action;
+      if(!confirm(confirmText+" "+player+"?"))return;
+      try{
+        const result=await api(url("/player-action"),{method:"POST",body:JSON.stringify({player,action,gamemode,reason:action==="kick"||action==="ban"?"Action issued by server administrator":undefined})});
+        status.textContent=action+" command sent for "+player+".";
+        await refreshPlayers();
+      }catch(err){alert(err.message);}
+    }
+    async function viewInventory(player){
+      inventory.innerHTML='<p class="nx-muted">Reading '+esc(player)+' inventory…</p>';
+      try{
+        const d=await api(url("/player-inventory?player="+encodeURIComponent(player)));
+        const items=d.items||[];
+        inventory.innerHTML='<h3>'+esc(player)+' — Inventory</h3><p class="nx-muted">Live inventory read from Minecraft. Slot numbering follows the server NBT response; empty slots are omitted.</p>'+
+          (items.length?'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(115px,1fr));gap:7px">'+items.map(item=>'<div style="border:1px solid #31506e;border-radius:8px;background:#07111f;padding:10px"><div class="nx-muted">Slot '+esc(item.slot)+'</div><strong style="overflow-wrap:anywhere">'+esc(item.id.replace(/^minecraft:/,""))+'</strong><div>Count: '+esc(item.count)+'</div></div>').join("")+'</div>':'<p class="nx-muted">The server returned no parsed item entries. Raw response is shown below in case this Minecraft version uses a different NBT format.</p>')+
+          '<details style="margin-top:12px"><summary>Raw Minecraft inventory data</summary><pre class="nx-console" style="height:auto;max-height:260px">'+esc(d.raw||"No raw data")+'</pre></details>';
+      }catch(err){inventory.innerHTML='<p class="nx-muted">'+esc(err.message)+'</p>';}
+    }
+    list.onclick=async e=>{
+      const b=e.target.closest("button");if(!b)return;
+      if(b.dataset.playerInventory)await viewInventory(b.dataset.playerInventory);
+      else if(b.dataset.playerKick)await runAction(b.dataset.playerKick,"kick");
+      else if(b.dataset.playerBan)await runAction(b.dataset.playerBan,"ban");
+    };
+    q("[data-pm-refresh]",overlay).onclick=refreshPlayers;
+    q("[data-pm-action]",overlay).onsubmit=async e=>{
+      e.preventDefault();const player=q("[data-pm-name]",overlay).value.trim(),action=q("[data-pm-kind]",overlay).value;
+      const gamemode=action==="gamemode"?(prompt("Gamemode: survival, creative, adventure or spectator","survival")||""):"";
+      if(action==="gamemode"&&!["survival","creative","adventure","spectator"].includes(gamemode.toLowerCase())){alert("Invalid gamemode.");return;}
+      await runAction(player,action,gamemode.toLowerCase());
+    };
+    await refreshPlayers();
   }
   async function openFiles(id,name) {
     serverId=id;let currentPath="";
