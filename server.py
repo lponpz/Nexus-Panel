@@ -882,6 +882,18 @@ class Handler(SimpleHTTPRequestHandler):
                         server_name = db.execute("SELECT name FROM servers WHERE id=?", (sid,)).fetchone()["name"]
                     add_activity("Server assigned to customer", server_name + " · " + customer_id)
                     return self.json_response(200, {"ok": True, "server_id": sid, "customer_id": customer_id})
+                if action == "install-plugin":
+                    with DB_LOCK, connect_db() as db:
+                        game_row = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
+                    if not game_row or game_row["game"] != "Minecraft":
+                        raise ValueError("The Modrinth plugin installer is available only for Minecraft servers.")
+                    if snapshot(sid).get("running"):
+                        raise RuntimeError("Stop the Minecraft server before installing a plugin.")
+                    from runtime_manager import install_modrinth_plugin, detect_minecraft_version
+                    version = detect_minecraft_version(SERVERS_DIR / sid)
+                    result = install_modrinth_plugin(SERVERS_DIR / sid, str(data.get("query", "")), version)
+                    add_activity("Paper plugin installed", sid + " · " + result["project"] + " " + result["version"])
+                    return self.json_response(200, {"ok": True, "plugin": result})
                 if action == "install":
                     with DB_LOCK, connect_db() as db:
                         game_row = db.execute("SELECT game FROM servers WHERE id=?", (sid,)).fetchone()
@@ -890,6 +902,10 @@ class Handler(SimpleHTTPRequestHandler):
                     if snapshot(sid).get("running"):
                         raise RuntimeError("Stop the server before installing or replacing server software.")
                     result = install_paper(SERVERS_DIR / sid, str(data.get("version", "latest")))
+                    metadata_path = SERVERS_DIR / sid / "nexus-server.json"
+                    metadata_tmp = metadata_path.with_suffix(".json.tmp")
+                    metadata_tmp.write_text(json.dumps({"software": "paper", "game_version": result["version"], "installed_at": now()}, separators=(",", ":")), encoding="utf-8")
+                    os.replace(metadata_tmp, metadata_path)
                     add_activity("Paper server software installed", sid + " · " + result["version"])
                     return self.json_response(200, {"ok": True, "install": result})
                 if action == "backup-schedule":
