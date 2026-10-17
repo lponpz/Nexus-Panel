@@ -44,7 +44,7 @@ class NetworkAddressTests(unittest.TestCase):
         props=(server.SERVERS_DIR/first["item"]["id"]/"server.properties").read_text()
         self.assertIn("server-port="+str(first["item"]["connect_port"]),props)
         self.assertIn("server-ip=",props)
-        status,_,data=request("/api/servers")
+        status,_,data=request("/api/servers",cookie=self.cookie)
         self.assertEqual(status,200)
         self.assertEqual(len([x for x in data["items"] if x["connect_port"]]),2)
     def test_public_host_setting_validation_and_join_address(self):
