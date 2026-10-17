@@ -3,3 +3,5 @@ __pycache__/
 data/*.sqlite3
 data/*.db
 .env
+
+data/servers/
