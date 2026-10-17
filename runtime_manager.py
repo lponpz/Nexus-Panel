@@ -321,6 +321,34 @@ def logs(server_id):
         return {"running": bool(item and item["process"].poll() is None), "logs": list(item["logs"]) if item else []}
 
 
+def shutdown_all():
+    """Gracefully stop processes owned by this backend before an update/restart."""
+    with _LOCK:
+        server_ids = list(_PROCESSES.keys())
+    stopped = []
+    for server_id in server_ids:
+        try:
+            state = snapshot(server_id)
+            if state.get("running"):
+                stop(server_id)
+                stopped.append(server_id)
+        except Exception:
+            # Last-resort cleanup only for processes still tracked by this process.
+            with _LOCK:
+                item = _PROCESSES.get(server_id)
+                process = item.get("process") if item else None
+            if process and process.poll() is None:
+                try:
+                    process.terminate()
+                    process.wait(timeout=5)
+                except Exception:
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
+    return stopped
+
+
 def command(server_id, text):
     text = str(text).strip()
     if not text or len(text) > 1000 or any(ord(ch) < 32 and ch != "\t" for ch in text):
