@@ -38,7 +38,14 @@ if is_nexus_running "$PORT"; then
   if [ -n "$OLD_PID" ] && printf '%s' "$OLD_ARGS" | grep -Fq "$ROOT/server.py"; then
     echo "Restarting Nexus Panel backend to apply the current repository code..."
     kill "$OLD_PID" 2>/dev/null || true
-    sleep 1
+    for attempt in $(seq 1 60); do
+      if port_is_open "$PORT"; then break; fi
+      sleep 0.5
+    done
+    if ! port_is_open "$PORT"; then
+      echo "Nexus backend did not shut down cleanly on port $PORT; refusing to start a second instance."
+      exit 1
+    fi
   else
     echo "Nexus Panel is already running on port $PORT under another process."
     echo "No process was stopped. Set NEXUS_PORT to another port if needed."
