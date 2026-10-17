@@ -22,8 +22,8 @@ port_is_open() {
   python3 -c 'import socket,sys
 s=socket.socket()
 try: s.bind(("127.0.0.1",int(sys.argv[1])))
-except OSError: sys.exit(0)
-else: s.close(); sys.exit(1)' "$1"
+except OSError: sys.exit(1)
+else: s.close(); sys.exit(0)' "$1"
 }
 # Reuse the app if it is already serving its health endpoint.
 if is_nexus_running "$PORT"; then
