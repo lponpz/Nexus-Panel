@@ -8,6 +8,7 @@ A planned feature is not complete until implemented, tested, and documented. The
 - [x] First-run owner bootstrap, password hashing, expiring sessions, login throttling and CSRF-protected mutations.
 - [x] Per-server local Java process start/stop/restart, console commands/logs, file CRUD, upload and download.
 - [x] One-click stable Paper installer with published SHA-256 verification and explicit EULA confirmation.
+- [x] Modrinth Paper plugin installer: auto-select latest stable compatible version and verify the artifact checksum before atomic install.
 - [x] Automated authentication/Paper installer tests and GitHub Actions checks.
 - [ ] Production web framework and hardened deployment architecture.
 - [ ] Multi-user tenant model, per-server authorization and customer/reseller accounts.
