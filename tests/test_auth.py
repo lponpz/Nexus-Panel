@@ -46,7 +46,7 @@ def request(path, method="GET", payload=None, cookie=None, csrf=None):
 class AuthIntegrationTests(unittest.TestCase):
     def setUp(self):
         with server.DB_LOCK, server.connect_db() as db:
-            for table in ("sessions", "backups", "users", "servers", "server_runtime", "connectors", "activities", "settings"):
+            for table in ("sessions", "backups", "backup_schedules", "users", "servers", "server_runtime", "connectors", "activities", "settings"):
                 db.execute("DELETE FROM " + table)
 
     def create_owner(self):
@@ -144,6 +144,26 @@ class AuthIntegrationTests(unittest.TestCase):
         status, _, backups_response = request("/api/servers/" + server_id + "/backups", cookie=cookie)
         self.assertEqual(status, 200)
         self.assertEqual(len(backups_response["items"]), 2)
+
+    def test_backup_schedule_can_be_enabled_and_disabled(self):
+        cookie, csrf = self.create_owner()
+        payload = {"name": "Scheduled Backup Test", "game": "Minecraft", "panel": "Nexus (local)", "status": "Configured"}
+        status, _, data = request("/api/servers", "POST", payload, cookie=cookie, csrf=csrf)
+        self.assertEqual(status, 201, data)
+        server_id = data["item"]["id"]
+        status, _, initial = request("/api/servers/" + server_id + "/backup-schedule", cookie=cookie)
+        self.assertEqual(status, 200)
+        self.assertEqual(initial["schedule"]["enabled"], 0)
+        status, _, enabled = request("/api/servers/" + server_id + "/backup-schedule", "POST",
+                                     {"enabled": True, "interval_hours": 6}, cookie=cookie, csrf=csrf)
+        self.assertEqual(status, 200, enabled)
+        self.assertEqual(enabled["schedule"]["enabled"], 1)
+        self.assertIsNotNone(enabled["schedule"]["next_run_at"])
+        status, _, disabled = request("/api/servers/" + server_id + "/backup-schedule", "POST",
+                                      {"enabled": False, "interval_hours": 24}, cookie=cookie, csrf=csrf)
+        self.assertEqual(status, 200, disabled)
+        self.assertEqual(disabled["schedule"]["enabled"], 0)
+        self.assertIsNone(disabled["schedule"]["next_run_at"])
 
 
 if __name__ == "__main__":
