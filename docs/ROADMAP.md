@@ -1,16 +1,18 @@
 # Nexus Panel — Master Roadmap
 
-All features below are planned unless explicitly shown in the Phase 1 prototype. The dashboard currently uses demo data and has no live panel API integration.
+A planned feature is not complete until implemented, tested, and documented. The current branch has a real local Java runtime, owner authentication, per-server console/files, verified Paper installation, and CI checks. It is still not a production multi-node hosting panel.
 
-## Phase 1 — Foundation
+## Phase 1 — Foundation (partially implemented)
 - [x] Blue Neon responsive dashboard shell and mobile navigation.
-- [x] Sample overview cards, connector list, activity feed, server table and quick actions.
-- [x] UI-only connector setup dialog and basic client-side search.
-- [x] Universal adapter architecture and roadmap documentation.
-- [ ] Select and scaffold production framework.
-- [ ] Define authentication, typed API, database schema and tenant model.
-- [ ] Implement connector registry and first real adapter with contract tests.
-- [ ] Add automated checks and CI.
+- [x] SQLite-backed server/connector records and activity feed.
+- [x] First-run owner bootstrap, password hashing, expiring sessions, login throttling and CSRF-protected mutations.
+- [x] Per-server local Java process start/stop/restart, console commands/logs, file CRUD, upload and download.
+- [x] One-click stable Paper installer with published SHA-256 verification and explicit EULA confirmation.
+- [x] Automated authentication/Paper installer tests and GitHub Actions checks.
+- [ ] Production web framework and hardened deployment architecture.
+- [ ] Multi-user tenant model, per-server authorization and customer/reseller accounts.
+- [ ] Real remote node agent with isolated execution and resource limits.
+- [ ] First live external panel adapter with encrypted credentials and contract tests.
 
 ## Universal multi-panel platform
 - Unified server dashboard across supported panels.
@@ -27,6 +29,20 @@ All features below are planned unless explicitly shown in the Phase 1 prototype.
 - Personal dashboard studio with custom widgets, saved views and quick actions.
 - White-label brands: logo, favicon, colors, login/loading screens, domains, emails/invoices, store/support links and multiple brand profiles.
 - Localization and language packs, locale/timezone, dates, numbers and currency display.
+
+## Selected Nexus features (user-approved scope)
+- Automatic Backup Scheduler.
+- Mod Compatibility Checker.
+- Hosting Plan Builder.
+- Nexus Plugin Marketplace.
+- Expiry Grace Dashboard.
+- Free Server Queue.
+- Server Templates.
+- Live Performance Dashboard.
+- Role Permission Builder.
+- One-Click Restore.
+
+These remain planned until the relevant storage, scheduler, node, permission, and recovery backends are implemented and tested.
 
 ## Admin Control Center
 - Searchable global settings registry.
