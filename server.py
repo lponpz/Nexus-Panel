@@ -1202,8 +1202,66 @@ def _backup_scheduler_loop():
             print("[nexus] Backup scheduler error: " + str(exc))
 
 
+def ensure_node_agent():
+    """Start or reuse the private local process manager so game servers survive panel restarts."""
+    import secrets
+    import subprocess
+    import sys
+    token_path = DATA_DIR / "node-agent.token"
+    if token_path.is_symlink():
+        raise RuntimeError("Node agent token file cannot be a symbolic link.")
+    if token_path.is_file():
+        token = token_path.read_text("utf-8").strip()
+    else:
+        token = ""
+    if len(token) < 32:
+        token = secrets.token_urlsafe(48)
+        temp = token_path.with_suffix(".tmp")
+        temp.write_text(token + "\\n", encoding="utf-8")
+        try: os.chmod(temp, 0o600)
+        except OSError: pass
+        os.replace(temp, token_path)
+    try: os.chmod(token_path, 0o600)
+    except OSError: pass
+    port = int(os.environ.get("NEXUS_NODE_AGENT_PORT", "7879"))
+    if port < 1024 or port > 65535:
+        raise RuntimeError("NEXUS_NODE_AGENT_PORT must be between 1024 and 65535.")
+    os.environ["NEXUS_NODE_AGENT_URL"] = "http://127.0.0.1:" + str(port)
+    os.environ["NEXUS_NODE_AGENT_TOKEN"] = token
+    os.environ.pop("NEXUS_NODE_AGENT_MODE", None)
+    from runtime_manager import _agent_request
+    try:
+        _agent_request("GET", "/health", timeout=1)
+        print("[nexus] Reusing persistent local node agent.")
+        return
+    except RuntimeError:
+        pass
+    log_path = DATA_DIR / "node-agent.log"
+    env = os.environ.copy()
+    env["NEXUS_NODE_AGENT_MODE"] = "1"
+    agent_script = ROOT / "node_agent.py"
+    if not agent_script.is_file():
+        raise RuntimeError("node_agent.py is missing; cannot safely manage persistent game processes.")
+    with log_path.open("ab") as log:
+        subprocess.Popen([sys.executable, str(agent_script)], cwd=str(ROOT), env=env,
+                         stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                         start_new_session=True, close_fds=True)
+    deadline = time.monotonic() + 8
+    last_error = "Node agent did not become ready."
+    while time.monotonic() < deadline:
+        try:
+            result = _agent_request("GET", "/health", timeout=1)
+            print("[nexus] Persistent local node agent ready (PID " + str(result.get("pid")) + ").")
+            return
+        except RuntimeError as exc:
+            last_error = str(exc)
+            time.sleep(0.15)
+    raise RuntimeError("Could not start the local node agent: " + last_error)
+
+
 if __name__ == "__main__":
     init_db()
+    ensure_node_agent()
     threading.Thread(target=_backup_scheduler_loop, daemon=True, name="nexus-backup-scheduler").start()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     print("Nexus Panel development backend")
@@ -1215,7 +1273,7 @@ if __name__ == "__main__":
         print("Local-only binding enabled. Node isolation and production hardening are still required before public deployment.")
 
     def _handle_shutdown(signum, frame):
-        print("[nexus] Shutdown requested; stopping managed game processes safely...")
+        print("[nexus] Panel shutdown requested; persistent node agent will keep game servers running.")
         threading.Thread(target=httpd.shutdown, daemon=True, name="nexus-http-shutdown").start()
 
     signal.signal(signal.SIGTERM, _handle_shutdown)
@@ -1223,9 +1281,5 @@ if __name__ == "__main__":
     try:
         httpd.serve_forever()
     finally:
-        try:
-            from runtime_manager import shutdown_all
-            stopped = shutdown_all()
-            print("[nexus] Stopped " + str(len(stopped)) + " managed game process(es).")
-        finally:
-            httpd.server_close()
+        httpd.server_close()
+        print("[nexus] Web panel stopped. The local node agent remains running independently.");
