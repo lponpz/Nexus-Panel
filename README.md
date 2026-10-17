@@ -25,7 +25,7 @@ Open the installer/dashboard URL printed by the launcher. If it does not open au
 - Owners can create customer accounts from **Customers & Resellers** and assign a server to a customer.
 - Each server has an `owner_user_id`; customers can list and operate only their assigned servers. Owner-only billing, network settings, connector management and customer administration APIs reject customer sessions.
 - Customer accounts sign in through the same login page and are redirected to `customer.html`, where they can copy the Java Edition join address, check live server status/player count, start/restart/stop an assigned server, and read/send console commands.
-- Initial passwords are manually shared by the owner; email delivery, customer password reset, customer self-service plan purchase, and verified payment automation are not implemented yet.
+- Initial passwords are manually shared by the owner. Owners can reset customer passwords or suspend/reactivate accounts; customers can change their own passwords. Email delivery, password-reset emails, customer self-service plan purchase, and verified payment automation are not implemented yet.
 
 ## Minecraft join addresses and port allocation
 
