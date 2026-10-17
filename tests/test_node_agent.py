@@ -12,7 +12,9 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 import secrets
+import signal
 import runtime_manager
+import server
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -75,6 +77,37 @@ class NodeAgentIntegrationTests(unittest.TestCase):
         stopped=runtime_manager.stop(self.server_id)
         self.assertFalse(stopped["running"])
         self.assertFalse(runtime_manager.snapshot(self.server_id)["running"])
+    def test_panel_startup_creates_and_reuses_persistent_agent(self):
+        data_dir=self.root/"panel-data";data_dir.mkdir()
+        bind=socket.socket();bind.bind(("127.0.0.1",0));port=bind.getsockname()[1];bind.close()
+        keys=("NEXUS_DATA_DIR","NEXUS_NODE_AGENT_PORT","NEXUS_NODE_AGENT_URL","NEXUS_NODE_AGENT_TOKEN","NEXUS_NODE_AGENT_MODE")
+        previous={key:os.environ.get(key) for key in keys}
+        pid=None
+        try:
+            os.environ["NEXUS_DATA_DIR"]=str(data_dir)
+            os.environ["NEXUS_NODE_AGENT_PORT"]=str(port)
+            os.environ.pop("NEXUS_NODE_AGENT_URL",None);os.environ.pop("NEXUS_NODE_AGENT_TOKEN",None);os.environ.pop("NEXUS_NODE_AGENT_MODE",None)
+            with patch.object(server,"DATA_DIR",data_dir):
+                server.ensure_node_agent()
+                token=(data_dir/"node-agent.token").read_text("utf-8").strip()
+                self.assertGreaterEqual(len(token),32)
+                health=runtime_manager._agent_request("GET","/health",timeout=1)
+                pid=health["pid"]
+                server.ensure_node_agent()
+                self.assertEqual(runtime_manager._agent_request("GET","/health",timeout=1)["pid"],pid)
+        finally:
+            if pid:
+                try: os.kill(pid,signal.SIGTERM)
+                except OSError: pass
+                deadline=time.time()+3
+                while time.time()<deadline:
+                    try:
+                        runtime_manager._agent_request("GET","/health",timeout=0.2)
+                        time.sleep(0.05)
+                    except RuntimeError: break
+            for key,value in previous.items():
+                if value is None: os.environ.pop(key,None)
+                else: os.environ[key]=value
     def test_agent_rejects_missing_authentication_token(self):
         req=Request(self.base+"/health")
         with self.assertRaises(Exception):
