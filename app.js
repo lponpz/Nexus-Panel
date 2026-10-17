@@ -78,14 +78,32 @@ function renderPageWorkspace(page) {
     root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Panel connections</h2><p>Stored endpoints, not yet authenticated.</p></div><button class="button primary" id="workspaceConnect">＋ Add connector</button></div><div class="workspace-connector-list">' +
       (cachedConnectors.length ? cachedConnectors.map(item => '<div class="workspace-connector"><div><strong>' + esc(item.panel_type) + '</strong><p>' + esc(item.base_url) + '</p><small>' + esc(item.status) + '</small></div><button class="button danger" data-delete-connector="' + esc(item.id) + '">Remove</button></div>').join("") : '<div class="empty-panel"><h3>No panel connections</h3><p>Add a Pterodactyl, Pelican or AMP endpoint.</p></div>') + '</div></section><div class="notice-panel">For safety, Nexus currently stores only the URL. It does not store API keys or send commands to external panels.</div>';
   } else {
+    if (page === "Nodes & Capacity") {
+      root.innerHTML = '<section class="card workspace-card"><div class="section-heading"><div><h2>Local host capacity</h2><p>Live operating-system metrics for the machine running this Nexus instance.</p></div><button class="button secondary" id="refreshHostMetrics">↻ Refresh metrics</button></div><div class="managed-server-grid" data-host-metrics><article class="managed-server"><h3>Loading telemetry…</h3><p>Reading CPU, memory and disk statistics.</p></article></div><div class="notice-panel">These are host-level readings, not per-container quotas. Remote nodes, container isolation and enforced resource limits are not implemented yet.</div></section>';
+      const loadHostMetrics = async () => {
+        const target = root.querySelector("[data-host-metrics]");
+        try {
+          const m = await api("/api/host-metrics");
+          const memoryUsed = m.memory_total_mb == null || m.memory_available_mb == null ? null : Math.max(0, m.memory_total_mb - m.memory_available_mb);
+          target.innerHTML = [
+            ["CPU cores", String(m.cpu_count), "1-minute load: " + (m.load_1m == null ? "Unavailable" : m.load_1m)],
+            ["Memory used", memoryUsed == null ? "Unavailable" : memoryUsed.toLocaleString() + " MB", "Total: " + (m.memory_total_mb == null ? "Unavailable" : m.memory_total_mb.toLocaleString() + " MB")],
+            ["Disk free", m.disk_free_gb.toFixed(2) + " GB", "Total: " + m.disk_total_gb.toFixed(2) + " GB"]
+          ].map(item => '<article class="managed-server"><div class="managed-server-top"><span class="game mc">N</span><span class="server-status configured"><i></i>Live</span></div><h3>' + esc(item[0]) + '</h3><p>' + esc(item[1]) + '</p><div class="managed-server-id">' + esc(item[2]) + '</div></article>').join("");
+        } catch (error) { target.innerHTML = '<div class="notice-panel">' + esc(error.message) + '</div>'; }
+      };
+      root.querySelector("#refreshHostMetrics").addEventListener("click", loadHostMetrics);
+      loadHostMetrics();
+      return;
+    }
     const content = {
       "Nodes & Capacity":["Node inventory","CPU, RAM, disk and allocation telemetry","No node agents are connected. This section will show real capacity after a node agent is added."],
-      "Backups & Recovery":["Backup jobs","Policies, snapshots and restore points","No backup provider is configured. No backup has been created by Nexus."],
+      "Backups & Recovery":["Backup jobs","Per-server local backup and restore controls","Open a server's File Manager to create backups, schedule automatic snapshots, or restore a checksum-verified backup."],
       "Store & Billing":["Products and plans","Plans, invoices and payment status","Billing is not connected. No payments or invoices are being processed."],
-      "Customers & Resellers":["Customer accounts","Owners, customers, teams and resellers","Authentication and tenant permissions must be implemented before customer access is enabled."],
+      "Customers & Resellers":["Customer accounts","Owners, customers, teams and resellers","Owner login is active. Multi-user accounts, customer tenancy and per-server permissions remain to be implemented."],
       "Automation & AI":["Workflow center","Scheduled tasks and event-driven automation","No automation runs in the background in this version."],
       "Extensions":["Extensions library","Approved add-ons and integrations","The extension loader and marketplace are not active yet."],
-      "Security & Audit":["Activity audit","Recent changes recorded by this local workspace","The local activity feed is available on Overview. Owner login, sessions and role permissions are not yet implemented."],
+      "Security & Audit":["Activity audit","Recent changes recorded by this local workspace","Owner login, expiring sessions, login throttling and CSRF-protected mutations are active. Customer roles and full production security hardening remain pending."],
       "Settings":["Workspace settings","Control how this Nexus workspace is presented","Workspace name is set during installation. More settings will be added as their backend support is implemented."]
     }[page] || ["Workspace","Nexus Panel","This section is not available yet."];
     root.innerHTML = '<section class="card workspace-card placeholder-workspace"><div class="placeholder-icon">✦</div><h2>' + esc(content[0]) + '</h2><p>' + esc(content[1]) + '</p><div class="notice-panel">' + esc(content[2]) + '</div></section>';
