@@ -7,7 +7,6 @@ verified backend/adapter is configured. Standard-library only.
 from __future__ import annotations
 
 import curses
-import os
 import sys
 import textwrap
 from datetime import datetime
@@ -169,7 +168,7 @@ def main(stdscr):
             safe_add(stdscr, menu_y + i, 3, f"{i + 1:>2}  {name}", attr, min(26, w // 2))
             if w > 62:
                 safe_add(stdscr, menu_y + i, min(32, w - 5), desc, curses.color_pair(MUTED), w - min(34, w - 5) - 2)
-        footer = "↑/↓ Navigate  •  Enter Select  •  P Change target  •  Q Exit"
+        footer = "1-9: Open option  •  ↑/↓ + Enter: Select  •  P: Target  •  0/Q: Exit"
         safe_add(stdscr, h - 3, 2, "─" * max(1, w - 4), curses.color_pair(BLUE))
         safe_add(stdscr, h - 2, 2, footer, curses.A_DIM)
         safe_add(stdscr, h - 1, 2, "Prototype only: all system-changing operations are disabled.", curses.color_pair(WARN))
@@ -181,8 +180,12 @@ def main(stdscr):
             selected = (selected + 1) % len(ACTIONS)
         elif key in (ord("p"), ord("P")):
             panel = choose_panel(stdscr, panel)
-        elif key in (ord("q"), ord("Q"), 27):
+        elif key in (ord("q"), ord("Q"), ord("0"), 27):
             return
+        elif ord("1") <= key <= ord("9"):
+            selected = key - ord("1")
+            if not run_action(stdscr, ACTIONS[selected][0], panel):
+                return
         elif key in (10, 13, curses.KEY_ENTER):
             if not run_action(stdscr, ACTIONS[selected][0], panel):
                 return
