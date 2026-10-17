@@ -1,14 +1,14 @@
 # One-command launch
 
-From the repository root in GitHub Codespaces, run:
+From the repository root in GitHub Codespaces:
 
     git pull
     bash ./nexus
 
-The launcher starts the Python backend, initializes SQLite, checks /api/health, and prints the dashboard URL. Open port 8000 from the Codespaces Ports tab if the browser does not open automatically.
+The launcher starts the Python backend, initializes SQLite, checks the health endpoint and prints two URLs: **Installer GUI** and **Dashboard**. Open the Installer GUI URL first. If the browser does not open automatically, open the **Ports** tab and open the actual port printed in the terminal.
 
-To clone for the first time:
+The launcher checks whether port 8000 is occupied; if so, it tries the next available port. For a first-time clone:
 
     git clone https://github.com/lponpz/Nexus-Panel.git && cd Nexus-Panel && bash ./nexus
 
-This is a working local MVP: server records and connector endpoint records can be created and deleted and are stored in SQLite. It is not yet a production panel; no login/authentication or external panel-control adapter is implemented. Keep the Codespaces port private and do not enter API tokens.
+The browser installer saves a workspace name. The dashboard supports local server records and connector endpoint records. It does not yet control external hosting panels or install remote game servers. Keep the forwarded port Private; this MVP has no login.
