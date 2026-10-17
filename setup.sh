@@ -38,7 +38,7 @@ fi
 java -version 2>&1 | head -n 1 || fail "Java is installed but could not run."
 mkdir -p data/servers
 chmod 700 data data/servers 2>/dev/null || true
-python3 -m py_compile server.py runtime_manager.py || fail "Python syntax check failed."
+python3 -m py_compile server.py runtime_manager.py backup_manager.py || fail "Python syntax check failed."
 say "Python syntax checks passed."
 say "Initializing local database and default workspace."
 python3 - <<'PY'
