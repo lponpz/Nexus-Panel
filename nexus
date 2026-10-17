@@ -73,7 +73,7 @@ else
   fi
   echo "Starting Nexus Panel backend on $NEXUS_HOST:$PORT..."
   if [[ "$NEXUS_HOST" != "127.0.0.1" && "$NEXUS_HOST" != "::1" && "$NEXUS_HOST" != "localhost" ]]; then
-    echo "SECURITY WARNING: remote binding has no login/auth yet. Keep this Codespaces port PRIVATE."
+    echo "SECURITY WARNING: owner login exists, but node isolation and production hardening are incomplete. Keep this Codespaces port PRIVATE."
   fi
   nohup python3 "$ROOT/server.py" > /tmp/nexus-dashboard.log 2>&1 &
   PID=$!
@@ -106,4 +106,4 @@ echo "Health check:  http://127.0.0.1:$PORT/api/health"
 echo "Database:      $ROOT/data/nexus.sqlite3"
 echo "Log:           /tmp/nexus-dashboard.log"
 echo
-echo "Keep the Codespaces port PRIVATE. This MVP has no login yet."
+echo "Keep the Codespaces port PRIVATE. Authentication is enabled, but node isolation and production hardening are incomplete."
