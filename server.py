@@ -426,7 +426,7 @@ class Handler(SimpleHTTPRequestHandler):
             if len(parts) != 4 or not server_exists(parts[2]): return self.json_response(404, {"ok": False, "error": "Server not found"})
             sid, action = parts[2], parts[3]
             from runtime_manager import start, stop, command, change_file, snapshot, install_paper, _validate
-                from backup_manager import create_backup, restore_backup
+            from backup_manager import create_backup, restore_backup
             try:
                 if action == "install":
                     with DB_LOCK, connect_db() as db:
@@ -538,11 +538,15 @@ class Handler(SimpleHTTPRequestHandler):
                 except RuntimeError as exc:
                     return self.auth_error(409, "Cannot delete a running server safely: " + str(exc))
             with DB_LOCK, connect_db() as db:
+                db.execute("DELETE FROM backups WHERE server_id=?", (item_id,))
                 db.execute("DELETE FROM server_runtime WHERE server_id=?", (item_id,))
                 db.execute("DELETE FROM servers WHERE id=?", (item_id,))
             server_dir = (SERVERS_DIR / item_id).resolve()
             if server_dir.parent == SERVERS_DIR.resolve() and server_dir.exists():
                 shutil.rmtree(server_dir)
+            backup_dir = (BACKUPS_DIR / item_id).resolve()
+            if backup_dir.parent == BACKUPS_DIR.resolve() and backup_dir.exists():
+                shutil.rmtree(backup_dir)
         else:
             with DB_LOCK, connect_db() as db:
                 db.execute("DELETE FROM connectors WHERE id=?", (item_id,))
