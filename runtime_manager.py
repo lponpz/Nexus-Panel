@@ -424,6 +424,101 @@ def install_modrinth_plugin(directory, query, game_version=None):
             "sha512": hashlib.sha512(payload).hexdigest(), "path": "plugins/" + filename}
 
 
+def install_modrinth_mod(directory, query, game_version=None):
+    """Install the newest stable Fabric mod compatible with the detected Minecraft version."""
+    root = Path(directory).resolve()
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Server directory is invalid.")
+    query = str(query or "").strip()
+    if not query or len(query) > 120 or any(ord(ch) < 32 for ch in query):
+        raise ValueError("Enter a mod name or search phrase up to 120 characters.")
+    if not isinstance(game_version, str) or not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", game_version):
+        raise ValueError("Nexus could not detect the Minecraft version. Install Paper and start the server once before installing mods.")
+    from urllib.parse import urlencode
+    search_url = "https://api.modrinth.com/v2/search?" + urlencode({
+        "query": query,
+        "facets": json.dumps([["project_type:mod"]]),
+        "limit": "10"
+    })
+    search = _modrinth_json(search_url)
+    hits = search.get("hits", []) if isinstance(search, dict) else []
+    candidates = [hit for hit in hits if isinstance(hit, dict) and hit.get("project_type") == "mod"
+                  and isinstance(hit.get("slug"), str) and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", hit["slug"])]
+    if not candidates:
+        raise ValueError("No Modrinth Fabric mods matched that search.")
+    project = candidates[0]
+    versions_url = "https://api.modrinth.com/v2/project/" + project["slug"] + "/version?" + urlencode({
+        "loaders": json.dumps(["fabric"]),
+        "game_versions": json.dumps([game_version])
+    })
+    versions = _modrinth_json(versions_url)
+    if not isinstance(versions, list):
+        raise ValueError("Modrinth returned an invalid mod version list.")
+    compatible = [v for v in versions if isinstance(v, dict) and v.get("version_type", "release") == "release"
+                  and isinstance(v.get("files"), list) and v["files"]]
+    if not compatible:
+        raise ValueError("No stable version of " + str(project.get("title", project["slug"])) +
+                         " supports Minecraft " + game_version + " on Paper.")
+    selected = compatible[0]
+    files = [f for f in selected["files"] if isinstance(f, dict)]
+    file_info = next((f for f in files if f.get("primary") is True), files[0] if files else None)
+    if not file_info:
+        raise ValueError("Modrinth did not provide a mod artifact.")
+    filename = file_info.get("filename", "")
+    url = file_info.get("url", "")
+    size = file_info.get("size")
+    hashes = file_info.get("hashes", {}) if isinstance(file_info.get("hashes"), dict) else {}
+    expected_sha512 = hashes.get("sha512")
+    expected_sha1 = hashes.get("sha1")
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname != "cdn.modrinth.com":
+        raise ValueError("Modrinth returned an untrusted mod download URL.")
+    if not isinstance(filename, str) or not re.fullmatch(r"[A-Za-z0-9_. -]{1,180}\.jar", filename):
+        raise ValueError("Modrinth returned an invalid mod filename.")
+    if not isinstance(size, int) or size < 1 or size > 100 * 1024 * 1024:
+        raise ValueError("Mod artifact is missing its size or exceeds the 100 MB limit.")
+    if not ((isinstance(expected_sha512, str) and re.fullmatch(r"[0-9a-fA-F]{128}", expected_sha512))
+            or (isinstance(expected_sha1, str) and re.fullmatch(r"[0-9a-fA-F]{40}", expected_sha1))):
+        raise ValueError("Modrinth did not provide a valid artifact checksum.")
+    mod_dir = root / "mods"
+    if mod_dir.is_symlink():
+        raise ValueError("Mod directory cannot be a symbolic link.")
+    mod_dir.mkdir(parents=True, exist_ok=True)
+    target = mod_dir / filename
+    if target.exists() or target.is_symlink():
+        raise ValueError("Mod file already exists: " + filename + ". Remove it before reinstalling.")
+    request = urllib.request.Request(url, headers={"User-Agent": "NexusPanel/0.1 (https://github.com/lponpz/Nexus-Panel)"})
+    temp_name = None
+    try:
+        with urllib.request.urlopen(request, timeout=45) as response:
+            if urlparse(response.geturl()).hostname != "cdn.modrinth.com":
+                raise ValueError("Mod download redirected to an untrusted host.")
+            payload = response.read(100 * 1024 * 1024 + 1)
+        if len(payload) != size or len(payload) > 100 * 1024 * 1024:
+            raise ValueError("Downloaded mod size did not match Modrinth metadata.")
+        if expected_sha512 and hashlib.sha512(payload).hexdigest().lower() != expected_sha512.lower():
+            raise ValueError("Mod SHA-512 verification failed; the download was discarded.")
+        if not expected_sha512 and hashlib.sha1(payload).hexdigest().lower() != expected_sha1.lower():
+            raise ValueError("Mod SHA-1 verification failed; the download was discarded.")
+        fd, temp_name = tempfile.mkstemp(prefix=".nexus-mod-", suffix=".tmp", dir=str(mod_dir))
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_name, target)
+        temp_name = None
+    finally:
+        if temp_name:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
+    return {"project": str(project.get("title", project["slug"]))[:160],
+            "slug": project["slug"], "version": str(selected.get("version_number", ""))[:80],
+            "game_version": game_version, "filename": filename, "size": size,
+            "sha512": hashlib.sha512(payload).hexdigest(), "path": "mods/" + filename}
+
+
 def _validate(command):
     if not isinstance(command, str) or not command.strip() or len(command) > 500:
         raise ValueError("Enter a launch command under 500 characters.")
