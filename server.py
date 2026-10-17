@@ -15,6 +15,9 @@ SERVERS_DIR = DATA_DIR / "servers"
 SERVERS_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "nexus.sqlite3"
 PORT = int(os.environ.get("NEXUS_PORT", "8000"))
+# Bind to loopback by default. Remote binding is only enabled explicitly by the launcher
+# for Codespaces, where the user must keep the forwarded port private.
+HOST = os.environ.get("NEXUS_HOST", "127.0.0.1")
 DB_LOCK = threading.RLock()
 VALID_GAMES = {"Minecraft", "FiveM", "Terraria", "Other"}
 VALID_STATUSES = {"Configured", "Stopped", "Maintenance"}
@@ -243,6 +246,9 @@ if __name__ == "__main__":
     init_db()
     print("Nexus Panel local development backend")
     print("Database:", DB_PATH)
-    print("Listening on 0.0.0.0:" + str(PORT))
-    print("Keep the Codespaces port private: owner login and production hardening are not implemented.")
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    print("Listening on " + HOST + ":" + str(PORT))
+    if HOST not in ("127.0.0.1", "::1", "localhost"):
+        print("WARNING: remote binding enabled; this MVP has no login/authorization. Keep the forwarded port PRIVATE.")
+    else:
+        print("Local-only binding enabled. No login/authorization is implemented in this development build.")
+    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
