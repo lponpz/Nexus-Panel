@@ -754,12 +754,19 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json_response(400, {"ok": False, "error": str(exc)})
         if path == "/api/billing/invoices":
             plan_id = str(data.get("plan_id", ""))
+            customer_user_id = str(data.get("customer_user_id", "")).strip() or None
             customer_name = str(data.get("customer_name", "")).strip()
             customer_email = str(data.get("customer_email", "")).strip().lower()
-            if not customer_name or len(customer_name) > 120 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", customer_email):
-                return self.json_response(400, {"ok": False, "error": "Enter a customer name and valid email address."})
             with DB_LOCK, connect_db() as db:
                 plan = db.execute("SELECT * FROM billing_plans WHERE id=? AND enabled=1", (plan_id,)).fetchone()
+                customer = db.execute("SELECT u.username,c.email FROM users u JOIN customers c ON c.user_id=u.id WHERE u.id=? AND u.role='customer' AND c.status='active'", (customer_user_id,)).fetchone() if customer_user_id else None
+                if customer_user_id and not customer:
+                    return self.json_response(404, {"ok": False, "error": "Active customer account not found."})
+                if customer:
+                    customer_name = customer_name or customer["username"]
+                    customer_email = customer_email or customer["email"]
+                if not customer_name or len(customer_name) > 120 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", customer_email):
+                    return self.json_response(400, {"ok": False, "error": "Enter a customer name and valid email address. Add an email to the customer account or provide one here."})
                 if not plan:
                     return self.json_response(404, {"ok": False, "error": "Enabled billing plan not found."})
                 count = db.execute("SELECT COUNT(*) FROM billing_invoices").fetchone()[0]
@@ -767,9 +774,9 @@ class Handler(SimpleHTTPRequestHandler):
                 invoice_id = str(uuid.uuid4())
                 created = datetime.now(timezone.utc)
                 due = (created + timedelta(days=7)).isoformat(timespec="seconds")
-                db.execute("INSERT INTO billing_invoices(id,invoice_number,plan_id,plan_name,customer_name,customer_email,currency,amount_minor,status,payment_reference,notes,created_at,due_at,paid_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                db.execute("INSERT INTO billing_invoices(id,invoice_number,plan_id,plan_name,customer_name,customer_email,currency,amount_minor,status,payment_reference,notes,created_at,due_at,paid_at,customer_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                            (invoice_id, invoice_number, plan["id"], plan["name"], customer_name, customer_email,
-                            plan["currency"], plan["price_minor"], "pending", None, "", now(), due, None))
+                            plan["currency"], plan["price_minor"], "pending", None, "", now(), due, None, customer_user_id))
                 row = db.execute("SELECT * FROM billing_invoices WHERE id=?", (invoice_id,)).fetchone()
             add_activity("Billing invoice created", invoice_number + " · " + customer_email)
             return self.json_response(201, {"ok": True, "item": dict(row)})
