@@ -43,7 +43,7 @@ function renderServers(items) {
   tbody.innerHTML = items.map(item => '<tr data-search="' + esc([item.name,item.game,item.panel].join(" ").toLowerCase()) + '">' +
     '<td><div class="server-name"><span class="game ' + gameClass(item.game) + '">' + gameLetter(item.game) + '</span><div><strong>' + esc(item.name) + '</strong><small>' + esc(item.id.slice(0,8)) + '</small></div></div></td>' +
     '<td>' + esc(item.game) + '</td><td><span class="tag">' + esc(item.panel) + '</span></td>' +
-    '<td><span class="server-status ' + (item.status === "Stopped" ? "stopped" : "running") + '"><i></i>' + esc(item.status) + '</span></td>' +
+    '<td><span class="server-status ' + (item.status === "Stopped" ? "stopped" : item.status === "Maintenance" ? "maintenance" : "configured") + '"><i></i>' + esc(item.status) + '</span></td>' +
     '<td><span>Not connected</span></td><td><button class="record-delete" data-delete-server="' + esc(item.id) + '">Delete</button></td></tr>').join("");
 }
 function renderConnectors(items) {
