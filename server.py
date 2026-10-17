@@ -197,6 +197,10 @@ class Handler(SimpleHTTPRequestHandler):
         # Serve only files inside the repository root; the standard handler normalizes paths.
         parsed = urlparse(path)
         rel = url2pathname(parsed.path).lstrip("/")
+        parts = Path(rel).parts
+        # Never expose the SQLite database, dotfiles, or repository metadata as static files.
+        if (parts and (parts[0] == "data" or any(part.startswith(".") for part in parts)):
+            return str(ROOT / "__not_found__")
         target = (ROOT / rel).resolve()
         if target != ROOT and ROOT not in target.parents:
             return str(ROOT / "__not_found__")
