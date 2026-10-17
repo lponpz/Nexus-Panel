@@ -130,6 +130,11 @@ class Handler(SimpleHTTPRequestHandler):
                     connectors = db.execute("SELECT COUNT(*) FROM connectors").fetchone()[0]
                     activities = [dict(r) for r in db.execute("SELECT * FROM activities ORDER BY id DESC LIMIT 8")]
                 return self.json_response(200, {"ok": True, "servers": servers, "connectors": connectors, "activities": activities})
+            if path == "/api/setup":
+                with DB_LOCK, connect_db() as db:
+                    rows = {r["key"]: r["value"] for r in db.execute("SELECT key,value FROM settings")}
+                return self.json_response(200, {"ok": True, "configured": rows.get("setup_complete") == "true",
+                    "workspace_name": rows.get("workspace_name", "Nexus Workspace")})
             if path == "/api/servers":
                 with DB_LOCK, connect_db() as db:
                     rows = [dict(r) for r in db.execute("SELECT * FROM servers ORDER BY created_at DESC")]
@@ -148,6 +153,15 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError as exc:
             return self.json_response(400, {"ok": False, "error": str(exc)})
 
+        if path == "/api/setup":
+            workspace_name = str(data.get("workspace_name", "Nexus Workspace")).strip()
+            if not workspace_name or len(workspace_name) > 60 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]*", workspace_name):
+                return self.json_response(400, {"ok": False, "error": "Workspace name must be 1-60 letters, numbers, spaces, dots, underscores or hyphens."})
+            with DB_LOCK, connect_db() as db:
+                db.execute("INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES(?,?,?)", ("workspace_name", workspace_name, now()))
+                db.execute("INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES(?,?,?)", ("setup_complete", "true", now()))
+            add_activity("Nexus setup completed", "Workspace configured: " + workspace_name)
+            return self.json_response(200, {"ok": True, "configured": True, "workspace_name": workspace_name})
         if path == "/api/servers":
             name = str(data.get("name", "")).strip()
             game = str(data.get("game", "")).strip()
