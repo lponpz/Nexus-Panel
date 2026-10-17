@@ -84,3 +84,10 @@
 .server-address-card small{color:var(--muted,#9fb0c7);font-size:11px}
 .server-address-card strong{font-size:16px;color:#7ce8b2;overflow-wrap:anywhere}
 .server-address-card button{justify-self:start}
+
+
+/* Global backup inventory */
+.backup-record-list{display:flex;flex-direction:column;gap:9px;margin:14px 0}
+.backup-record{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid var(--border,#243449);border-radius:11px;background:rgba(4,14,27,.55);min-width:0}
+.backup-record>div{display:grid;gap:4px;min-width:0}.backup-record strong{overflow-wrap:anywhere;font-size:13px}.backup-record small{color:var(--muted,#9fb0c7);font-size:11px;overflow-wrap:anywhere}
+@media(max-width:520px){.backup-record{align-items:flex-start;flex-direction:column}.backup-record button{width:100%}}
