@@ -26,4 +26,6 @@ jobs:
         run: |
           node --check app.js
           node --check runtime-ui.js
+          python -c "from pathlib import Path; import re; s=Path('customer.html').read_text(); m=re.search(r'<script>(.*?)</script>', s, re.S); assert m, 'customer portal script missing'; Path('/tmp/nexus-customer-inline.js').write_text(m.group(1))"
+          node --check /tmp/nexus-customer-inline.js
           bash -n nexus setup.sh
