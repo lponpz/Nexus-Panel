@@ -65,6 +65,22 @@ def init_db():
             interval_hours INTEGER NOT NULL DEFAULT 24, next_run_at TEXT,
             last_run_at TEXT, updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS billing_plans (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+            currency TEXT NOT NULL DEFAULT 'PKR', price_minor INTEGER NOT NULL,
+            billing_interval TEXT NOT NULL DEFAULT 'month',
+            ram_mb INTEGER NOT NULL, cpu_percent INTEGER NOT NULL, disk_mb INTEGER NOT NULL,
+            server_limit INTEGER NOT NULL DEFAULT 1, enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS billing_invoices (
+            id TEXT PRIMARY KEY, invoice_number TEXT NOT NULL UNIQUE, plan_id TEXT,
+            plan_name TEXT NOT NULL, customer_name TEXT NOT NULL, customer_email TEXT NOT NULL,
+            currency TEXT NOT NULL, amount_minor INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+            payment_reference TEXT, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+            due_at TEXT NOT NULL, paid_at TEXT,
+            FOREIGN KEY(plan_id) REFERENCES billing_plans(id) ON DELETE SET NULL
+        );
         """)
         if not db.execute("SELECT COUNT(*) FROM activities").fetchone()[0]:
             db.execute("INSERT INTO activities(message,detail,created_at) VALUES(?,?,?)", ("Nexus initialized", "Local database created", now()))
@@ -250,6 +266,14 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/setup":
             with DB_LOCK, connect_db() as db: rows = {r["key"]: r["value"] for r in db.execute("SELECT key,value FROM settings")}
             return self.json_response(200, {"ok": True, "configured": rows.get("setup_complete") == "true", "workspace_name": rows.get("workspace_name", "Nexus Workspace")})
+        if path == "/api/billing/plans":
+            with DB_LOCK, connect_db() as db:
+                rows = [dict(row) for row in db.execute("SELECT * FROM billing_plans ORDER BY created_at DESC")]
+            return self.json_response(200, {"ok": True, "items": rows})
+        if path == "/api/billing/invoices":
+            with DB_LOCK, connect_db() as db:
+                rows = [dict(row) for row in db.execute("SELECT * FROM billing_invoices ORDER BY created_at DESC LIMIT 500")]
+            return self.json_response(200, {"ok": True, "items": rows})
         if path == "/api/host-metrics":
             from runtime_manager import host_metrics
             return self.json_response(200, {"ok": True, **host_metrics(DATA_DIR)})
@@ -423,6 +447,78 @@ class Handler(SimpleHTTPRequestHandler):
             headers = [("Set-Cookie", "nexus_session=" + token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200" + secure)]
             add_activity("Nexus owner account created", username)
             return self.json_response(200, {"ok": True, "configured": True, "workspace_name": name, "authenticated": True, "csrf_token": csrf}, headers)
+        if path == "/api/billing/plans":
+            name = str(data.get("name", "")).strip()
+            description = str(data.get("description", "")).strip()[:500]
+            currency = str(data.get("currency", "PKR")).upper()
+            interval = str(data.get("billing_interval", "month"))
+            try:
+                price = data.get("price_minor")
+                ram = data.get("ram_mb")
+                cpu = data.get("cpu_percent")
+                disk = data.get("disk_mb")
+                limit = data.get("server_limit", 1)
+                values = (price, ram, cpu, disk, limit)
+                if any(isinstance(v, bool) or not isinstance(v, int) for v in values):
+                    raise ValueError("Price and resource limits must be whole numbers.")
+                if not name or len(name) > 80 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]*", name):
+                    raise ValueError("Plan name must be 1–80 valid characters.")
+                if currency not in ("PKR", "USD", "INR") or interval not in ("month", "year"):
+                    raise ValueError("Choose PKR, USD or INR and a monthly or yearly interval.")
+                if not (0 <= price <= 100000000 and 256 <= ram <= 1048576 and 10 <= cpu <= 6400 and 512 <= disk <= 1048576 and 1 <= limit <= 100):
+                    raise ValueError("Plan price or resource limits are outside supported bounds.")
+                plan = {"id": str(uuid.uuid4()), "name": name, "description": description,
+                        "currency": currency, "price_minor": price, "billing_interval": interval,
+                        "ram_mb": ram, "cpu_percent": cpu, "disk_mb": disk, "server_limit": limit,
+                        "enabled": 1, "created_at": now(), "updated_at": now()}
+                with DB_LOCK, connect_db() as db:
+                    db.execute("INSERT INTO billing_plans(id,name,description,currency,price_minor,billing_interval,ram_mb,cpu_percent,disk_mb,server_limit,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                               tuple(plan[k] for k in ("id","name","description","currency","price_minor","billing_interval","ram_mb","cpu_percent","disk_mb","server_limit","enabled","created_at","updated_at")))
+                add_activity("Billing plan created", name)
+                return self.json_response(201, {"ok": True, "item": plan})
+            except (ValueError, TypeError) as exc:
+                return self.json_response(400, {"ok": False, "error": str(exc)})
+        if path == "/api/billing/invoices":
+            plan_id = str(data.get("plan_id", ""))
+            customer_name = str(data.get("customer_name", "")).strip()
+            customer_email = str(data.get("customer_email", "")).strip().lower()
+            if not customer_name or len(customer_name) > 120 or not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+", customer_email):
+                return self.json_response(400, {"ok": False, "error": "Enter a customer name and valid email address."})
+            with DB_LOCK, connect_db() as db:
+                plan = db.execute("SELECT * FROM billing_plans WHERE id=? AND enabled=1", (plan_id,)).fetchone()
+                if not plan:
+                    return self.json_response(404, {"ok": False, "error": "Enabled billing plan not found."})
+                count = db.execute("SELECT COUNT(*) FROM billing_invoices").fetchone()[0]
+                invoice_number = "NEX-" + datetime.now(timezone.utc).strftime("%Y%m") + "-" + str(count + 1).zfill(5)
+                invoice_id = str(uuid.uuid4())
+                created = datetime.now(timezone.utc)
+                due = (created + timedelta(days=7)).isoformat(timespec="seconds")
+                db.execute("INSERT INTO billing_invoices(id,invoice_number,plan_id,plan_name,customer_name,customer_email,currency,amount_minor,status,payment_reference,notes,created_at,due_at,paid_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           (invoice_id, invoice_number, plan["id"], plan["name"], customer_name, customer_email,
+                            plan["currency"], plan["price_minor"], "pending", None, "", now(), due, None))
+                row = db.execute("SELECT * FROM billing_invoices WHERE id=?", (invoice_id,)).fetchone()
+            add_activity("Billing invoice created", invoice_number + " · " + customer_email)
+            return self.json_response(201, {"ok": True, "item": dict(row)})
+        if path.startswith("/api/billing/invoices/") and path.endswith("/record-payment"):
+            parts = path.strip("/").split("/")
+            if len(parts) != 5:
+                return self.json_response(404, {"ok": False, "error": "Invoice action not found"})
+            invoice_id = parts[3]
+            reference = str(data.get("payment_reference", "")).strip()
+            notes = str(data.get("notes", "")).strip()[:500]
+            if not reference or len(reference) > 120:
+                return self.json_response(400, {"ok": False, "error": "Enter a payment reference before recording payment."})
+            with DB_LOCK, connect_db() as db:
+                invoice = db.execute("SELECT * FROM billing_invoices WHERE id=?", (invoice_id,)).fetchone()
+                if not invoice:
+                    return self.json_response(404, {"ok": False, "error": "Invoice not found."})
+                if invoice["status"] == "paid":
+                    return self.json_response(409, {"ok": False, "error": "This invoice is already recorded as paid."})
+                db.execute("UPDATE billing_invoices SET status='paid',payment_reference=?,notes=?,paid_at=? WHERE id=?",
+                           (reference, notes, now(), invoice_id))
+                row = db.execute("SELECT * FROM billing_invoices WHERE id=?", (invoice_id,)).fetchone()
+            add_activity("Manual payment recorded", row["invoice_number"] + " · reference " + reference)
+            return self.json_response(200, {"ok": True, "item": dict(row), "manual_record_only": True})
         if path == "/api/servers":
             name, game, panel = str(data.get("name", "")).strip(), str(data.get("game", "")).strip(), str(data.get("panel", "Nexus (local)")).strip()
             status = str(data.get("status", "Configured")).strip()
@@ -564,6 +660,15 @@ class Handler(SimpleHTTPRequestHandler):
         if not self.api_authenticated():
             return
         parts = urlparse(self.path).path.rstrip("/").split("/")
+        if len(parts) == 4 and parts[1:3] == ["api", "billing-plans"]:
+            plan_id = parts[3]
+            with DB_LOCK, connect_db() as db:
+                row = db.execute("SELECT name FROM billing_plans WHERE id=?", (plan_id,)).fetchone()
+                if row is None:
+                    return self.json_response(404, {"ok": False, "error": "Billing plan not found"})
+                db.execute("UPDATE billing_plans SET enabled=0,updated_at=? WHERE id=?", (now(), plan_id))
+            add_activity("Billing plan disabled", row["name"])
+            return self.json_response(200, {"ok": True, "disabled_id": plan_id})
         if len(parts) != 4 or parts[1] != "api" or parts[2] not in ("servers", "connectors"): return self.json_response(404, {"ok": False, "error": "API route not found"})
         kind, item_id = parts[2], parts[3]; table = "servers" if kind == "servers" else "connectors"
         with DB_LOCK, connect_db() as db:
