@@ -2,35 +2,51 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
-
+PORT="${NEXUS_PORT:-8000}"
 if ! command -v python3 >/dev/null 2>&1; then
-  echo "Nexus Panel needs Python 3. Install Python 3, then run: bash ./nexus"
+  echo "Nexus Panel requires Python 3. Install Python 3, then run: bash ./nexus"
   exit 1
 fi
-
-PORT="${NEXUS_PORT:-8000}"
 if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
   echo "Invalid NEXUS_PORT: choose a port between 1024 and 65535."
   exit 1
 fi
-
-# Start the static dashboard server once; bind to all interfaces for Codespaces port forwarding.
-if ! python3 -c 'import socket,sys; s=socket.socket(); s.settimeout(.3); sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)' "$PORT"; then
-  nohup python3 -m http.server "$PORT" --bind 0.0.0.0 --directory "$ROOT" > /tmp/nexus-dashboard.log 2>&1 &
-  echo $! > /tmp/nexus-dashboard.pid
-  sleep 1
-fi
-
-echo
-echo "NEXUS PANEL DASHBOARD"
-if [ -n "${CODESPACE_NAME:-}" ]; then
-  echo "Open dashboard: https://${CODESPACE_NAME}-${PORT}.app.github.dev"
+# Reuse the running Nexus API if it is already healthy.
+if python3 -c 'import urllib.request,sys; u="http://127.0.0.1:"+sys.argv[1]+"/api/health"; exec("try:\n r=urllib.request.urlopen(u,timeout=1); sys.exit(0 if r.status==200 else 1)\nexcept Exception:\n sys.exit(1)")' "$PORT"; then
+  echo "Nexus Panel backend is already running on port $PORT."
 else
-  echo "Open dashboard: http://localhost:${PORT}"
+  # Stop only the old prototype static server created by the previous launcher.
+  if [ -f /tmp/nexus-dashboard.pid ]; then
+    OLD_PID="$(cat /tmp/nexus-dashboard.pid 2>/dev/null || true)"
+    if [ -n "$OLD_PID" ] && ps -p "$OLD_PID" -o args= 2>/dev/null | grep -Fq "http.server $PORT"; then
+      kill "$OLD_PID" 2>/dev/null || true
+      sleep 1
+    fi
+  fi
+  echo "Starting Nexus Panel backend and SQLite database..."
+  nohup python3 server.py > /tmp/nexus-dashboard.log 2>&1 &
+  echo $! > /tmp/nexus-dashboard.pid
+  for attempt in $(seq 1 20); do
+    if python3 -c 'import urllib.request,sys; u="http://127.0.0.1:"+sys.argv[1]+"/api/health"; exec("try:\n r=urllib.request.urlopen(u,timeout=1); sys.exit(0 if r.status==200 else 1)\nexcept Exception:\n sys.exit(1)")' "$PORT"; then break; fi
+    sleep 0.5
+  done
+  if ! python3 -c 'import urllib.request,sys; u="http://127.0.0.1:"+sys.argv[1]+"/api/health"; exec("try:\n r=urllib.request.urlopen(u,timeout=1); sys.exit(0 if r.status==200 else 1)\nexcept Exception:\n sys.exit(1)")' "$PORT"; then
+    echo "Nexus backend did not start. Check /tmp/nexus-dashboard.log"
+    cat /tmp/nexus-dashboard.log
+    exit 1
+  fi
 fi
-echo "Dashboard server log: /tmp/nexus-dashboard.log"
-echo "Opening the terminal Control Center now. The web dashboard runs in the background."
-echo "Note: this is the current frontend prototype; backend and real panel operations are not connected yet."
 echo
-
-exec python3 tools/nexusctl.py
+echo "NEXUS PANEL MVP IS RUNNING"
+if [ -n "${CODESPACE_NAME:-}" ]; then
+  echo "Dashboard: https://${CODESPACE_NAME}-${PORT}.app.github.dev"
+  echo "If the browser does not open, go to the Codespaces Ports tab and open port $PORT."
+else
+  echo "Dashboard: http://localhost:$PORT"
+fi
+echo "Health API: /api/health"
+echo "SQLite database: $ROOT/data/nexus.sqlite3"
+echo "Log: /tmp/nexus-dashboard.log"
+echo
+echo "This is a working local MVP. Keep the Codespaces port PRIVATE."
+echo "External panel control, login/authentication, game process controls, billing and backups are not implemented yet."
