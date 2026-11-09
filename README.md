@@ -62,6 +62,24 @@ Open the installer/dashboard URL printed by the launcher. If it does not open au
 
 A complete hosting panel still needs a hardened node agent, isolated process execution, customer accounts and per-server authorization, resource limits, port allocation, real game installers, backups/restores, secure updates, and thorough integration/security tests. This repository is being built toward that goal in stages; do not treat this development build as production-safe.
 
+
+## Nexus Builder & Control Center
+
+The local text + browser management layer can be started from the repository root with:
+
+```bash
+bash nexus-control.sh
+```
+
+If run outside a checkout, the launcher clones `feature/nexus-auth-foundation` first. It opens a terminal menu and serves the browser GUI on port `8765`. In Codespaces, open forwarded port 8765 and keep it **Private**. The Control Center creates a per-run token for write actions.
+
+- Build / Download: creates a ZIP of the source while excluding `.git`, local `data/`, virtual environments, build output, and environment secret files.
+- Update: performs a fast-forward-only Git update and refuses to run with uncommitted changes.
+- Delete: requires exact typed confirmation and creates a backup ZIP before removing the source checkout.
+- Account shortcuts: open the existing panel setup and account-management screens. First-run Owner setup is supported; customer/User accounts are managed in the authenticated panel. A separate Admin role is **not yet implemented** and is not presented as available.
+
+This is a local development control tool, not a public remote administration service. Do not expose port 8765 publicly. The current game runtime remains a single local node and is not production-isolated.
+
 ## JTG installer audit
 
 See [JTG audit and Nexus integration roadmap](docs/JTG_AUDIT_AND_INTEGRATION.md) for the static installer review, security findings, and staged integration plan.
