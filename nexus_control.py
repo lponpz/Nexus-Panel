@@ -57,6 +57,7 @@ def safe_delete(confirmation):
         elif p.is_dir():
             try: p.rmdir()
             except OSError: pass
+    ROOT.rmdir()
     return str(backup)
 
 class Handler(http.server.BaseHTTPRequestHandler):
