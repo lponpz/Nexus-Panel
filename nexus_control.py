@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Nexus Builder & Control Center — local-only source package manager."""
 from __future__ import annotations
-import argparse, http.server, json, os, shutil, subprocess, tempfile, threading, time, zipfile
+import argparse, http.server, json, os, shutil, subprocess, tempfile, threading, time, zipfile, secrets, hmac
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent
-HOST = "127.0.0.1"
+HOST = "0.0.0.0" if os.environ.get("CODESPACE_NAME") else "127.0.0.1"
+CONTROL_TOKEN = secrets.token_urlsafe(32)
 PORT = int(os.environ.get("NEXUS_CONTROL_PORT", "8765"))
 OUT = ROOT / "dist"
 PAGE = ROOT / "nexus-control.html"
@@ -68,7 +69,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path=urlparse(self.path).path
         if path in ("/","/index.html"):
-            try: body=PAGE.read_bytes()
+            try: body=PAGE.read_bytes().replace(b"__NEXUS_CONTROL_TOKEN__", CONTROL_TOKEN.encode())
             except OSError: body=b"Nexus Control UI missing."
             self.send_response(200); self.send_header("Content-Type","text/html; charset=utf-8")
             self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body); return
@@ -81,6 +82,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length",str(len(body))); self.end_headers(); self.wfile.write(body); return
         self.send_error(404)
     def do_POST(self):
+        if not hmac.compare_digest(self.headers.get("X-Nexus-Control", ""), CONTROL_TOKEN):
+            return self.send_json(403,{"ok":False,"error":"Control Center session token rejected. Reload the page."})
         try:
             size=int(self.headers.get("Content-Length","0"))
             if size>4096: return self.send_json(413,{"ok":False,"error":"Request too large"})
@@ -125,7 +128,11 @@ def main():
     args=parser.parse_args()
     httpd=http.server.ThreadingHTTPServer((HOST,PORT),Handler)
     threading.Thread(target=httpd.serve_forever,daemon=True).start()
-    print(f"Nexus Control GUI: http://{HOST}:{PORT}/ (local machine only)")
+    if os.environ.get("CODESPACE_NAME"):
+        print("Nexus Control GUI: https://" + os.environ["CODESPACE_NAME"] + "-" + str(PORT) + ".app.github.dev/")
+        print("Keep the forwarded Control Center port PRIVATE. Write actions use a per-run token.")
+    else:
+        print(f"Nexus Control GUI: http://127.0.0.1:{PORT}/ (local machine only)")
     if not args.gui_only: menu()
     else:
         try:
